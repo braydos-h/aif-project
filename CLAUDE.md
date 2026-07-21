@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 After every session add to the commits.md file with stuff you have done and the date and time when you finished working.
 ## What this is
 
-A single-file Python HTTP service (`app.py`) that estimates a cow's weight from an image payload. No external dependencies — standard library only (`http.server`, `urllib`, `hashlib`).
+A single-file Python HTTP service (`app.py`) that estimates a cow's weight from an image payload. No external dependencies — standard library only (`http.server`, `urllib`, `hashlib`, `base64`, `re`). Configuration is loaded from a `.env` file at startup via a stdlib-only loader (`_load_env_file`); environment variables already set take precedence over `.env`.
+
+## Backend selection
+
+`CowWeightEstimator` picks a backend (constructor arg or `AIF_AI_BACKEND` env, default `ollama`):
+- **`ollama`** (default) — POSTs to the local Ollama runtime (`AIF_OLLAMA_URL`, default `http://localhost:11434/api/generate`) with model `AIF_AI_MODEL` (default `llava`), sending the image as base64 and a text prompt. It extracts the weight from the model's free-form text reply (`<n> kg` preferred, else the first number) and reports `source == "ollama"`.
+- **`custom`** — selected automatically if `AIF_AI_API_URL` is set (constructor arg or env). It POSTs `{image, prompt}` to that API and extracts a weight from one of `weight_kg` / `estimate_kg` / `estimated_weight_kg` in the response. An optional `AIF_AI_API_KEY` adds an `X-API-Key` header. Reports `source == "ai_api"`.
+- **`none`** — deterministic local estimate derived from `sha256(image_reference)` → range 250–900 kg. The fallback is stable for a given input, which tests rely on. Reports `source == "local_fallback"`.
 
 ## Commands
 
@@ -29,14 +36,12 @@ There is no linter/formatter configured.
 
 The service has two layers, both in `app.py`:
 
-- **`CowWeightEstimator`** — the estimation logic, decoupled from HTTP. `estimate()` dispatches on whether an AI backend is configured:
-  - If `api_url` is set (constructor arg or `AIF_AI_API_URL` env var), it POSTs `{image, prompt}` to that API and extracts a weight from one of `weight_kg` / `estimate_kg` / `estimated_weight_kg` in the response. An optional `AIF_AI_API_KEY` adds an `X-API-Key` header.
-  - Otherwise it falls back to a **deterministic** local estimate derived from `sha256(image_reference)` → range 250–900 kg. The fallback is stable for a given input, which tests rely on.
+- **`CowWeightEstimator`** — the estimation logic, decoupled from HTTP. `estimate()` dispatches on the configured backend (see "Backend selection" above): `ollama` (default), `custom`, or `none`.
 
 - **`EstimateHandler`** — `BaseHTTPRequestHandler` subclass. Only `POST /estimate-weight` is valid; anything else returns 404. Accepts `image_url` **or** `image_base64` plus an optional `prompt` (defaults to `DEFAULT_PROMPT`). Estimator failures surface as `502 Bad Gateway`; bad input as `400`.
 
-The estimator is instantiated as a class attribute on the handler (`EstimateHandler.estimator`), so it's created once at import time using env vars present at startup — changing `AIF_AI_API_URL` after launch has no effect on a running server.
+The estimator is instantiated as a class attribute on the handler (`EstimateHandler.estimator`), so it's created once at import time using env vars / `.env` present at startup — changing them after launch has no effect on a running server.
 
 ## Tests
 
-`tests/test_app.py` boots a real `create_server(port=0)` on a background thread and exercises it over real HTTP (not in-process handler calls), so it validates the full request/response path including status codes and JSON serialization. The fallback-path test asserts `source == "local_fallback"`; it does not test the AI path.
+`tests/test_app.py` boots a real `create_server(port=0)` on a background thread and exercises it over real HTTP (not in-process handler calls), so it validates the full request/response path including status codes and JSON serialization. The HTTP tests force `backend="none"` so they use the deterministic fallback (no running Ollama needed) and assert `source == "local_fallback"`. A separate `OllamaEstimatorTests` class unit-tests the Ollama-specific helpers (`_extract_weight_from_text`, `_to_base64_image`) and backend selection logic; the live Ollama network path is not exercised.

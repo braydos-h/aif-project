@@ -17,8 +17,18 @@ POST JSON to `http://127.0.0.1:8080/estimate-weight`:
 }
 ```
 
-If `AIF_AI_API_URL` is set, the service forwards image + prompt to that AI API.
-If not set, a deterministic local fallback estimate is returned.
+The service uses the **Ollama** runtime by default (configurable via the `.env`
+file). It POSTs the image and a prompt to Ollama and extracts the weight from
+the model's reply.
+
+Backends (set `AIF_AI_BACKEND` in `.env`):
+
+- `ollama` (default) — local Ollama runtime (`AIF_OLLAMA_URL`, model `AIF_AI_MODEL`)
+- `custom` — generic AI API, used when `AIF_AI_API_URL` is set
+- `none` — deterministic local fallback estimate (no network calls)
+
+Copy/edit `.env` to point at your Ollama instance and model (defaults:
+`http://localhost:11434/api/generate` and `llava`).
 
 ## Test
 
