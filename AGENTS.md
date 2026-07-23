@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 After every session add to the commits.md file with stuff you have done and the date and time when you finished working.
 ## What this is
 
@@ -9,7 +9,7 @@ A single-file Python HTTP service (`app.py`) that estimates a cow's weight from 
 ## Backend selection
 
 `CowWeightEstimator` picks a backend (constructor arg or `AIF_AI_BACKEND` env, default `ollama`):
-- **`ollama`** (default) — POSTs to Ollama Cloud (`AIF_OLLAMA_URL`, default `https://ollama.com/api/generate`) with the `OLLAMA_API_KEY` bearer token and model `AIF_AI_MODEL` (default `gemma4:31b`; direct cloud omits the local-runtime `-cloud` suffix), sending the image as base64 and a text prompt. It extracts the weight from the model's free-form text reply (`<n> kg` preferred, else the first number) and reports `source == "ollama"`.
+- **`ollama`** (default) — POSTs to the local Ollama runtime (`AIF_OLLAMA_URL`, default `http://localhost:11434/api/generate`) with model `AIF_AI_MODEL` (default `llava`), sending the image as base64 and a text prompt. It extracts the weight from the model's free-form text reply (`<n> kg` preferred, else the first number) and reports `source == "ollama"`.
 - **`custom`** — selected automatically if `AIF_AI_API_URL` is set (constructor arg or env). It POSTs `{image, prompt}` to that API and extracts a weight from one of `weight_kg` / `estimate_kg` / `estimated_weight_kg` in the response. An optional `AIF_AI_API_KEY` adds an `X-API-Key` header. Reports `source == "ai_api"`.
 - **`none`** — deterministic local estimate derived from `sha256(image_reference)` → range 250–900 kg. The fallback is stable for a given input, which tests rely on. Reports `source == "local_fallback"`.
 

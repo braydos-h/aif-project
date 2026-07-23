@@ -1,5 +1,32 @@
 # Commits / session log
 
+## 2026-07-23 21:10
+- Fixed direct Ollama Cloud requests to use the API model name `gemma4:31b`;
+  the `gemma4:31b-cloud` alias is only valid through a local Ollama runtime.
+- Improved Ollama HTTP errors to include the response detail returned by the
+  cloud API and added a test assertion for the outgoing direct-cloud model.
+- Fixed WebP uploads on Windows by stripping base64 data-URI prefixes even when
+  the operating system reports the image as `application/octet-stream`.
+
+## 2026-07-23 21:06
+- Switched the default Ollama endpoint from the local runtime to the direct
+  Ollama Cloud API (`https://ollama.com/api/generate`) for `gemma4:31b-cloud`.
+- Added `OLLAMA_API_KEY` bearer-token support, a clear missing-key error, cloud
+  request tests, and updated configuration and documentation with API-key setup.
+
+## 2026-07-23 21:30
+- Changed the default Ollama model to `gemma4:31b-cloud` in both the built-in
+  application default and `.env` configuration. Updated the model default in
+  the README and Claude guidance.
+
+## 2026-07-23 21:00
+- Added `gui.py`, a dependency-free Tkinter Windows desktop interface for selecting
+  a local cow image, editing the estimation prompt, and displaying the estimate.
+  It runs the existing configured estimator directly and keeps the window
+  responsive while an estimate is being requested.
+- Added `start_gui.bat` for launching the desktop app by double-clicking, with
+  no command window, and updated `README.md` with the launch instructions.
+
 ## 2026-07-21 13:17
 - Made Ollama the default estimation backend in `app.py` (`CowWeightEstimator`).
   New `ollama` backend POSTs to the local Ollama runtime (`/api/generate` by

@@ -8,13 +8,14 @@ import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlparse
 
 
 DEFAULT_PROMPT = "Estimate this cow's weight in kilograms from the provided image."
 
-# Default backend is Ollama (local LLM runtime). Override via .env / env vars.
-DEFAULT_OLLAMA_URL = "http://localhost:11434/api/generate"
-DEFAULT_OLLAMA_MODEL = "llava"
+# Default backend is Ollama Cloud. Override via .env / env vars.
+DEFAULT_OLLAMA_URL = "https://ollama.com/api/generate"
+DEFAULT_OLLAMA_MODEL = "gemma4:31b"
 
 # Backend choices: "ollama" (default), "custom" (generic AI API), "none" (local fallback).
 BACKEND_OLLAMA = "ollama"
@@ -62,6 +63,7 @@ class CowWeightEstimator:
         self.api_url = api_url or os.environ.get("AIF_AI_API_URL")
         self.api_key = api_key or os.environ.get("AIF_AI_API_KEY")
         self.ollama_url = os.environ.get("AIF_OLLAMA_URL", DEFAULT_OLLAMA_URL)
+        self.ollama_api_key = os.environ.get("OLLAMA_API_KEY")
         self.model = model or os.environ.get("AIF_AI_MODEL", DEFAULT_OLLAMA_MODEL)
 
         if backend:
@@ -80,6 +82,12 @@ class CowWeightEstimator:
         return self._estimate_via_ollama(image_reference, prompt_to_use)
 
     def _estimate_via_ollama(self, image_reference: str, prompt: str) -> Dict[str, Any]:
+        if self._is_ollama_cloud_url() and not self.ollama_api_key:
+            raise ValueError(
+                "Ollama Cloud requires an API key. Set OLLAMA_API_KEY in .env "
+                "to an API key created at https://ollama.com/settings/keys."
+            )
+
         image_b64 = self._to_base64_image(image_reference)
         payload = json.dumps(
             {
@@ -95,11 +103,22 @@ class CowWeightEstimator:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
+        if self.ollama_api_key:
+            request.add_header("Authorization", f"Bearer {self.ollama_api_key}")
 
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 body = response.read().decode("utf-8")
                 parsed = json.loads(body) if body else {}
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            try:
+                error_detail = json.loads(error_body).get("error", error_body)
+            except json.JSONDecodeError:
+                error_detail = error_body
+            detail = error_detail.strip() if isinstance(error_detail, str) else str(error_detail)
+            message = detail or exc.reason
+            raise ValueError(f"Ollama request failed (HTTP {exc.code}): {message}") from exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise ValueError(f"Unable to reach Ollama at {self.ollama_url}: {exc}") from exc
 
@@ -119,6 +138,10 @@ class CowWeightEstimator:
             "model": self.model,
             "prompt_used": prompt,
         }
+
+    def _is_ollama_cloud_url(self) -> bool:
+        """Return whether the configured endpoint is Ollama's direct cloud API."""
+        return urlparse(self.ollama_url).hostname == "ollama.com"
 
     def _estimate_via_custom_api(self, image_reference: str, prompt: str) -> Dict[str, Any]:
         payload = json.dumps({"image": image_reference, "prompt": prompt}).encode("utf-8")
@@ -164,7 +187,9 @@ class CowWeightEstimator:
             return base64.b64encode(image_bytes).decode("ascii")
 
         stripped = image_reference
-        data_prefix_match = re.match(r"data:image/[^;]+;base64,", stripped)
+        # Accept any base64 data URI. Some Windows MIME databases do not know
+        # image/webp and label WebP files as application/octet-stream.
+        data_prefix_match = re.match(r"data:[^,]*;base64,", stripped, re.IGNORECASE)
         if data_prefix_match:
             stripped = stripped[data_prefix_match.end():]
         return stripped

@@ -3,6 +3,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from unittest import mock
 
 from app import CowWeightEstimator, DEFAULT_PROMPT, EstimateHandler, create_server
 
@@ -77,6 +78,45 @@ class OllamaEstimatorTests(unittest.TestCase):
         result = estimator.estimate("https://example.com/cow.jpg")
         self.assertEqual(result["source"], "local_fallback")
 
+    def test_cloud_endpoint_uses_bearer_token(self):
+        class FakeResponse:
+            def read(self):
+                return b'{"response": "612 kg"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "AIF_OLLAMA_URL": "https://ollama.com/api/generate",
+                "AIF_AI_MODEL": "gemma4:31b",
+                "OLLAMA_API_KEY": "test-key",
+            },
+            clear=False,
+        ), mock.patch("urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            result = CowWeightEstimator(backend="ollama").estimate("QUJD")
+
+        self.assertEqual(result["estimated_weight_kg"], 612.0)
+        self.assertEqual(urlopen.call_args.args[0].get_header("Authorization"), "Bearer test-key")
+        sent_payload = json.loads(urlopen.call_args.args[0].data)
+        self.assertEqual(sent_payload["model"], "gemma4:31b")
+
+    def test_cloud_endpoint_requires_api_key(self):
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "AIF_OLLAMA_URL": "https://ollama.com/api/generate",
+                "OLLAMA_API_KEY": "",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "OLLAMA_API_KEY"):
+                CowWeightEstimator(backend="ollama").estimate("QUJD")
+
     def test_extract_weight_prefers_explicit_kg(self):
         self.assertEqual(
             CowWeightEstimator._extract_weight_from_text("The cow weighs about 612 kg."),
@@ -94,6 +134,12 @@ class OllamaEstimatorTests(unittest.TestCase):
 
     def test_to_base64_strips_data_uri_prefix(self):
         encoded = CowWeightEstimator._to_base64_image("data:image/jpeg;base64,QUJD")
+        self.assertEqual(encoded, "QUJD")
+
+    def test_to_base64_strips_generic_mime_data_uri_prefix(self):
+        encoded = CowWeightEstimator._to_base64_image(
+            "data:application/octet-stream;base64,QUJD"
+        )
         self.assertEqual(encoded, "QUJD")
 
 
