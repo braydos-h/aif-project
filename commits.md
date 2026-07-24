@@ -1,4 +1,4 @@
-# Commits / session log
+# Commits 
 
 ## 2026-07-23 21:10
 - Fixed direct Ollama Cloud requests to use the API model name `gemma4:31b`;
