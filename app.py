@@ -1,3 +1,39 @@
+"""HTTP API and estimation core for the cow weight estimator.
+
+This module is the single source of truth for estimation logic and is shared
+by the HTTP server (``if __name__ == "__main__"``) and the desktop GUI
+(``gui.py``):
+
+- ``CowWeightEstimator`` — backend-agnostic estimation. ``estimate()``
+  dispatches to the configured backend (see "Adding a new backend" below).
+- ``EstimateHandler`` — the ``BaseHTTPRequestHandler`` serving
+  ``POST /estimate-weight``, ``GET /health``, ``GET /`` (see "Adding a new
+  endpoint" below).
+- ``create_server`` — dependency-injection entry point used by the tests
+  and the CLI.
+
+How to add a new backend
+------------------------
+1. Write a private method ``_estimate_via_<name>(image_reference, prompt)``
+   returning a dict shaped like the ollama result (``estimated_weight_kg``,
+   ``estimated_weight_lbs``, ``source``, ``prompt_used``, plus extras like
+   ``model_response``). Raise ``ValueError`` on any failure.
+2. Accept the backend name in ``__init__`` (constructor arg and/or a new
+   ``AIF_*`` env var) and dispatch to it in ``estimate()``.
+3. Document it in README.md, CONTRIBUTING.md, and .env.example, and add
+   tests in tests/test_app.py.
+
+How to add a new endpoint
+-------------------------
+1. Add a ``do_<METHOD>`` handler to ``EstimateHandler`` that validates
+   input, calls ``self.server.estimator`` (never a shared class attribute),
+   sets ``self.request_id``, and sends errors through
+   ``self._error(code, message, status)`` with a new machine-readable
+   ``code`` string.
+2. Update the API reference in README.md and add an HTTP test in
+   tests/test_app.py.
+"""
+
 import base64
 import hashlib
 import json
@@ -92,6 +128,7 @@ _load_env_file()
 
 
 def _kg_to_lbs(kg: float) -> float:
+    """Convert kilograms to pounds, rounded to one decimal place."""
     return round(kg * KG_TO_LBS, 1)
 
 
