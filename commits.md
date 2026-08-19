@@ -1,5 +1,48 @@
 # Commits
 
+## 2026-08-19 12:25 (session: GUI polish + code quality)
+- Fixed the default Ollama Cloud model name from `gemma4:31b` (20GB local
+  download, fails against the cloud endpoint) to `gemma4:31b-cloud` (the
+  direct-cloud tag) in `app.py`, `.env`, `.env.example`, README, AGENTS.md,
+  and CLAUDE.md. Verified against the Ollama model page.
+- Injected the estimator into the server via `create_server(host, port,
+  estimator=None)` and read it off `self.server.estimator` in the handler,
+  removing the shared `EstimateHandler.estimator` class attribute. Tests now
+  pass the estimator to `create_server` instead of monkey-patching the class.
+- Added structured error codes to every error response: `missing_body`,
+  `invalid_json`, `missing_image`, `not_found`, `estimation_failed`. New 502
+  test asserts `code == "estimation_failed"`; existing 400 test asserts
+  `code == "missing_image"`.
+- Replaced the silenced `log_message` with the `aif` logger; access and
+  error logs now flow through `logging` instead of being dropped. Added
+  `setup_logging()` called from both `app.py` and `gui.py` entry points.
+- Added `model_response` field to the estimator result (raw model text for
+  ollama, empty string for the fallback) so the GUI can show the model's
+  full reply.
+- Added `pyproject.toml` with project metadata, optional `dev`/`gui` extras,
+  and a ruff config (line-length 100, py311 target, E/F/I/UP/W rules). Lint
+  is clean. Added `coverage` config too.
+- Added `.env.example` as a committed template and gitignored `.env` (a
+  real Ollama API key was previously committed in `.env`; it returns 401
+  now so it was already revoked, but the file should never have been
+  tracked). Expanded `.gitignore` to also cover `build/`, `dist/`, `*.spec`,
+  `.coverage`, `htmlcov/`.
+- Rewrote `gui.py` with: backend/model selector (combobox + entry, no more
+  `.env` editing to switch backends), indeterminate progress bar during
+  estimates, copy-to-clipboard button, `Enter` estimates / `Ctrl+Enter`
+  inserts a newline, session-only history panel (last 20 estimates with
+  time/image/weight/source), image preview using Pillow when importable
+  (graceful fallback to filename + byte size when not), and a read-only
+  view of the model's full reply under the weight.
+- Added `GuiSmokeTests` that builds the Tk root + `CowWeightApp` and
+  destroys it, catching import/layout regressions in CI without an
+  interactive display. Verified the full GUI flow end-to-end with a temp
+  image: preview rendered, estimate ran on the background thread, history
+  row added, copy button worked.
+- Updated README.md, AGENTS.md, and CLAUDE.md to reflect the new model
+  name, error codes, logging, ruff/pyproject, GUI features, and `.env`
+  handling. All 14 tests pass; `ruff check .` is clean.
+
 ## 2026-08-19 (session: README rewrite)
 - Rewrote `README.md` end-to-end: added a Highlights section, Requirements,
   Quick start (GUI + API), full API reference with request/response tables
