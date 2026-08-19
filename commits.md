@@ -1,5 +1,57 @@
 # Commits
 
+## 2026-08-19 13:14 (session: Rust backend replaces the Python HTTP server)
+- **New Rust crate `backend/` (`aif-backend`) replaces `aif/server.py`.** The
+  Python `http.server` was single-threaded — one slow Ollama call blocked
+  every other request. The Rust server is a hand-rolled HTTP/1.1 server on
+  `std::net::TcpListener` with one thread per connection, so concurrent
+  requests run in parallel. Three deps only (`ureq` + rustls TLS,
+  `serde_json`, `sha2`), no async runtime.
+  - `backend/src/config.rs` — .env loader + defaults (mirrors `aif/config.py`).
+  - `backend/src/validate.rs` — base64 decode + JPEG/PNG/GIF/BMP/WebP magic-byte
+    validation (mirrors `_to_base64_image`/`_validate_image_bytes`).
+  - `backend/src/parse.rs` — structured-JSON-first / `<n> kg` / first-number
+    weight extraction (mirrors `_parse_structured_response`/
+    `_extract_weight_from_text`).
+  - `backend/src/fallback.rs` — deterministic SHA-256 estimate, bit-identical
+    to Python (`u32::from_be_bytes(digest[..4]) / u32::MAX` =
+    `int(hexdigest[:8], 16) / 0xFFFFFFFF`; verified 794.3/1751.1 for a sample).
+  - `backend/src/cache.rs` — TTL cache (`AIF_CACHE_TTL`, 0 disables).
+  - `backend/src/ollama.rs` — Ollama Cloud client: bearer auth, missing-key
+    error, retry-once-on-5xx/network, no-retry-on-4xx/non-JSON, 60s timeout.
+  - `backend/src/http.rs` — routes (`POST /estimate-weight`, `GET /health`,
+    `GET /`/`/info`, `OPTIONS` → 204), request ids (8-hex), CORS headers,
+    error codes (`missing_body`, `invalid_json`, `missing_image`,
+    `invalid_image`, `not_found`, `estimation_failed`), Content-Length body
+    reads, stderr logging.
+  - `backend/src/main.rs` — `--host`/`--port` flags (`--port 0` prints the
+    bound port to stdout).
+- **Rust unit tests** (`#[cfg(test)]` next to each module): 23 tests covering
+  config/.env parsing, base64 round-trip + rejection, magic bytes (incl. WebP
+  RIFF-only rejection), structured/text weight parsing, fallback determinism,
+  cache hit/disabled/expiry, retry details. `cargo clippy --all-targets` clean.
+- **`app.py` is now a launcher**: finds
+  `backend/target/release/aif-backend(.exe)` (override with `AIF_BACKEND_BIN`),
+  spawns it on 127.0.0.1:8080, prints build instructions if the binary is
+  missing. `python app.py` behavior unchanged.
+- **Deleted `aif/server.py`** (`EstimateHandler`, `create_server`); pruned
+  `aif/__init__.py` exports. `aif/estimator.py` stays — the GUI still uses
+  `CowWeightEstimator` in-process; its docstrings now point at the Rust parity
+  contract.
+- **`tests/test_server.py` rewritten**: spawns the compiled binary on a free
+  port (env override supported) and exercises the same API contract over real
+  HTTP — fallback weights, default prompt, lbs math, request-id header+body,
+  400 missing_image/missing_body/invalid_json, 502 estimation_failed (no key),
+  400 invalid_image (bad bytes), /health, /info, 404, OPTIONS 204, CORS, and a
+  new concurrent-requests test. 16 tests. Python suite is now 47 tests, all
+  passing; `ruff check .` clean.
+- **CI** (`.github/workflows/build-windows.yml`): installs Rust, runs
+  `cargo test`, builds the release binary before the Python suite, bundles
+  `aif-backend.exe` into the PyInstaller GUI, and uploads both executables.
+- **Docs**: README, CONTRIBUTING.md, AGENTS.md, CLAUDE.md updated to the
+  two-language layout (Rust server + Python GUI), build/test commands, and
+  the parity rule for shared logic.
+
 ## 2026-08-19 (session: installer)
 - Added `install.ps1`, a bootstrap installer that: installs Python 3.12 via
   winget when missing (installing winget itself if absent), installs Rust via
