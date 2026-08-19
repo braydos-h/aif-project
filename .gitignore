@@ -8,3 +8,7 @@ dist/
 htmlcov/
 .ruff_cache/
 497789W-AIF10-AT1-Brayden-Habets \[Autosaved\].pptx
+
+# Rust (backend)
+backend/target/
+target/
