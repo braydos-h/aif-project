@@ -2,6 +2,7 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 After every session add to the commits.md file with stuff you have done and the date and time when you finished working.
+**Rule: whenever an agent adds or changes code, it MUST append a new entry to `commits.md` (with date and time). Only append — never overwrite, rewrite, or delete existing entries in `commits.md`.**
 For conventions, repository layout, and step-by-step guides for common changes (new backend, new endpoint, GUI work), read [CONTRIBUTING.md](CONTRIBUTING.md).
 ## What this is
 
