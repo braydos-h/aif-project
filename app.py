@@ -466,17 +466,40 @@ class CowWeightEstimator:
 
 
 class EstimateHandler(BaseHTTPRequestHandler):
+    """Serve the HTTP API on top of an injected estimator.
+
+    The estimator instance is read off ``self.server.estimator`` (injected
+    by ``create_server``) rather than a class attribute, so each server can
+    have its own backend/model. Endpoints:
+
+    - ``POST /estimate-weight`` — estimate a cow's weight from an image.
+    - ``GET /health`` — liveness probe with the active backend/model.
+    - ``GET /`` and ``GET /info`` — service metadata.
+    - ``OPTIONS`` — CORS preflight.
+
+    Anything else returns ``404``. Every response carries a ``request_id``
+    (also echoed as an ``x-request-id`` header) to correlate logs. Errors
+    are JSON with a machine-readable ``code`` field plus a human ``error``
+    message.
+
+    Error codes: ``missing_body``, ``invalid_json``, ``missing_image``,
+    ``invalid_image``, ``not_found``, ``estimation_failed``.
+    """
+
     server_version = f"aif-cow-weight/{VERSION}"
 
     def _new_request_id(self) -> str:
+        """Generate a short unique id for the current request."""
         return uuid.uuid4().hex[:8]
 
     def _cors_headers(self) -> None:
+        """Attach permissive CORS headers so browsers can call the API."""
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def do_OPTIONS(self) -> None:
+        """Answer CORS preflight requests with 204 and no body."""
         self.request_id = self._new_request_id()
         self.send_response(int(HTTPStatus.NO_CONTENT))
         self._cors_headers()
@@ -484,6 +507,8 @@ class EstimateHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
+        """Serve ``GET /health`` (liveness + config) and ``GET /`` /
+        ``GET /info`` (metadata). Anything else returns 404."""
         self.request_id = self._new_request_id()
         if self.path == "/health":
             estimator = self.server.estimator  # type: ignore[attr-defined]
@@ -515,6 +540,13 @@ class EstimateHandler(BaseHTTPRequestHandler):
         self._error("not_found", "Not found", HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
+        """Handle ``POST /estimate-weight``.
+
+        Request body (JSON): ``image_url`` **or** ``image_base64`` (raw
+        base64 or a ``data:`` URI), plus an optional ``prompt``. Responds
+        200 with the estimate, 400 for bad input (including invalid image
+        bytes), 502 if the estimator fails, 404 for unknown paths.
+        """
         self.request_id = self._new_request_id()
         if self.path != "/estimate-weight":
             self._error("not_found", "Not found", HTTPStatus.NOT_FOUND)
@@ -561,10 +593,9 @@ class EstimateHandler(BaseHTTPRequestHandler):
         logger.info("%s [%s] - %s", self.address_string(), rid, format % args)
 
     def _error(self, code: str, message: str, status: HTTPStatus) -> None:
-        """Send a JSON error body with a machine-readable ``code``.
-        ``code`` is one of the handler's documented error codes; ``status``
-        is the HTTP status to return. 5xx errors are logged at error level,
-        everything else at warning."""
+        """Send a JSON error body with a machine-readable ``code`` and the
+        request id. 5xx errors are logged at error level, everything else at
+        warning level."""
         if status.value >= 500:
             logger.error("%s [%s]: %s", code, self.request_id, message)
         else:
