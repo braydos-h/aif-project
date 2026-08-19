@@ -1,5 +1,12 @@
 # Commits
 
+## 2026-08-19 (session: demo cow test button)
+- Added a "Test demo cows" button to the GUI (`gui.py`) that runs the
+  estimator over every image in the `cows/` folder (sorted, jpg/webp/etc.),
+  showing per-image progress, the last result, and adding each to the
+  session history. Runs in a background thread like the normal estimate.
+- All 14 tests pass; `ruff check .` is clean.
+
 ## 2026-08-19 12:27 (session: custom Ollama URL in GUI)
 - Added `ollama_url` constructor arg to `CowWeightEstimator` in `app.py`
   (overrides `AIF_OLLAMA_URL` env / `DEFAULT_OLLAMA_URL` when passed).

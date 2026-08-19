@@ -7,6 +7,7 @@ import os
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox, ttk
 
 from app import (
@@ -26,10 +27,13 @@ except ImportError:
 
 
 WINDOW_TITLE = "Cow Weight Estimator"
+PROJECT_URL = "https://github.com/braydos-h/aif-project"
 PREVIEW_SIZE = (160, 160)
 HISTORY_COLUMNS = ("time", "image", "weight", "source")
 HISTORY_MAX_ROWS = 20
 BACKEND_CHOICES = ("ollama", "none")
+DEMO_COW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cows")
+DEMO_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif")
 
 
 logger = logging.getLogger("aif.gui")
@@ -61,6 +65,7 @@ class CowWeightApp:
         self.model_var = tk.StringVar(value=DEFAULT_OLLAMA_MODEL)
         self.url_var = tk.StringVar(value=DEFAULT_OLLAMA_URL)
         self.preview_image: ImageTk.PhotoImage | None = None  # keep ref
+        self.last_request: tuple | None = None
 
         self._build_layout()
         self._bind_shortcuts()
@@ -128,10 +133,18 @@ class CowWeightApp:
             button_frame, text="Estimate weight", command=self.estimate
         )
         self.estimate_button.pack(side="left")
+        self.demo_button = ttk.Button(
+            button_frame, text="Test demo cows", command=self.estimate_demo_cows
+        )
+        self.demo_button.pack(side="left", padx=(8, 0))
         self.copy_button = ttk.Button(
             button_frame, text="Copy result", command=self.copy_result, state="disabled"
         )
         self.copy_button.pack(side="left", padx=(8, 0))
+        self.retry_button = ttk.Button(
+            button_frame, text="Retry", command=self.retry, state="disabled"
+        )
+        self.retry_button.pack(side="left", padx=(8, 0))
 
         self.progress = ttk.Progressbar(button_frame, mode="indeterminate", length=160)
         self.progress.pack(side="left", padx=(16, 0))
@@ -165,6 +178,15 @@ class CowWeightApp:
             self.history.column(col, width=width, stretch=(col == "image"))
         self.history.grid(row=13, column=0, columnspan=3, sticky="nsew")
         frame.rowconfigure(13, weight=1)
+
+        footer = ttk.Label(
+            frame,
+            text="Made by Brayden",
+            foreground="#0000EE",
+            cursor="hand2",
+        )
+        footer.grid(row=14, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        footer.bind("<Button-1>", lambda _event: webbrowser.open(PROJECT_URL))
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("<Return>", lambda _event: self.estimate())
@@ -219,18 +241,94 @@ class CowWeightApp:
         ollama_url = self.url_var.get().strip() or DEFAULT_OLLAMA_URL
         self.estimate_button.configure(state="disabled")
         self.copy_button.configure(state="disabled")
+        self.retry_button.configure(state="disabled")
         self.status_text.set("Estimating weight…")
         self.result_text.set("")
         self._set_reply("")
         self.progress.start(10)
+        start_time = time.monotonic()
+        self.last_request = (filename, prompt, backend, model, ollama_url)
         threading.Thread(
             target=self._estimate_in_background,
-            args=(filename, prompt, backend, model, ollama_url),
+            args=(filename, prompt, backend, model, ollama_url, start_time),
             daemon=True,
         ).start()
 
+    def estimate_demo_cows(self) -> None:
+        if not os.path.isdir(DEMO_COW_DIR):
+            messagebox.showerror(WINDOW_TITLE, f"Demo cow folder not found: {DEMO_COW_DIR}")
+            return
+        demo_files = sorted(
+            os.path.join(DEMO_COW_DIR, name)
+            for name in os.listdir(DEMO_COW_DIR)
+            if name.lower().endswith(DEMO_IMAGE_EXTS)
+        )
+        if not demo_files:
+            messagebox.showerror(WINDOW_TITLE, f"No cow images found in {DEMO_COW_DIR}")
+            return
+
+        prompt = self.prompt.get("1.0", "end").strip() or DEFAULT_PROMPT
+        backend = self.backend_var.get()
+        model = self.model_var.get().strip() or DEFAULT_OLLAMA_MODEL
+        ollama_url = self.url_var.get().strip() or DEFAULT_OLLAMA_URL
+        self.estimate_button.configure(state="disabled")
+        self.demo_button.configure(state="disabled")
+        self.copy_button.configure(state="disabled")
+        self.retry_button.configure(state="disabled")
+        self.result_text.set("")
+        self._set_reply("")
+        self.progress.start(10)
+        threading.Thread(
+            target=self._estimate_demo_cows_in_background,
+            args=(demo_files, prompt, backend, model, ollama_url),
+            daemon=True,
+        ).start()
+
+    def _estimate_demo_cows_in_background(
+        self, demo_files: list[str], prompt: str, backend: str, model: str, ollama_url: str
+    ) -> None:
+        estimator = CowWeightEstimator(backend=backend, model=model, ollama_url=ollama_url)
+        for index, filename in enumerate(demo_files, start=1):
+            message = f"Estimating {_short_name(filename)} ({index}/{len(demo_files)})…"
+            self.root.after(0, self.status_text.set, message)
+            try:
+                result = estimator.estimate(image_file_to_data_uri(filename), prompt)
+            except (OSError, ValueError) as exc:
+                self.root.after(0, self._show_error, str(exc))
+                return
+            self.root.after(
+                0,
+                self._show_demo_result,
+                result["estimated_weight_kg"],
+                result["source"],
+                result.get("model_response", ""),
+                filename,
+            )
+        self.root.after(0, self._finish_demo_run)
+
+    def _show_demo_result(
+        self, weight_kg: float, source: str, reply: str, filename: str
+    ) -> None:
+        self.result_text.set(f"Last demo cow: {_short_name(filename)} → {weight_kg:g} kg")
+        self._set_reply(reply)
+        self._add_history(weight_kg, source, filename)
+
+    def _finish_demo_run(self) -> None:
+        self.progress.stop()
+        self.status_text.set("Demo run completed.")
+        self.estimate_button.configure(state="normal")
+        self.demo_button.configure(state="normal")
+        self.copy_button.configure(state="normal")
+        self.retry_button.configure(state="normal")
+
     def _estimate_in_background(
-        self, filename: str, prompt: str, backend: str, model: str, ollama_url: str
+        self,
+        filename: str,
+        prompt: str,
+        backend: str,
+        model: str,
+        ollama_url: str,
+        start_time: float,
     ) -> None:
         try:
             estimator = CowWeightEstimator(
@@ -240,6 +338,7 @@ class CowWeightApp:
         except (OSError, ValueError) as exc:
             self.root.after(0, self._show_error, str(exc))
             return
+        elapsed = time.monotonic() - start_time
         self.root.after(
             0,
             self._show_result,
@@ -247,6 +346,7 @@ class CowWeightApp:
             result["source"],
             result.get("model_response", ""),
             filename,
+            elapsed,
         )
 
     def _show_error(self, error: str) -> None:
@@ -256,15 +356,20 @@ class CowWeightApp:
         messagebox.showerror(WINDOW_TITLE, error)
 
     def _show_result(
-        self, weight_kg: float, source: str, reply: str, filename: str
+        self,
+        weight_kg: float,
+        source: str,
+        reply: str,
+        filename: str,
+        elapsed: float,
     ) -> None:
         self.progress.stop()
-        self.status_text.set(f"Estimate completed using {source}.")
-        self.result_text.set(f"Estimated weight: {weight_kg:g} kg")
+        self.status_text.set(f"Estimate completed using {source} in {elapsed:.2f}s.")
+        self.result_text.set(f"Estimated weight: {weight_kg:g} kg ({elapsed:.2f}s)")
         self.estimate_button.configure(state="normal")
         self.copy_button.configure(state="normal")
         self._set_reply(reply)
-        self._add_history(weight_kg, source, filename)
+        self._add_history(weight_kg, source, filename, elapsed)
 
     def _set_reply(self, text: str) -> None:
         self.reply_text.configure(state="normal")
@@ -273,12 +378,15 @@ class CowWeightApp:
             self.reply_text.insert("1.0", text)
         self.reply_text.configure(state="disabled")
 
-    def _add_history(self, weight_kg: float, source: str, filename: str) -> None:
+    def _add_history(
+        self, weight_kg: float, source: str, filename: str, elapsed: float | None = None
+    ) -> None:
         timestamp = time.strftime("%H:%M:%S")
+        weight_text = f"{weight_kg:g}" + (f" ({elapsed:.2f}s)" if elapsed is not None else "")
         self.history.insert(
             "",
             "end",
-            values=(timestamp, _short_name(filename), f"{weight_kg:g}", source),
+            values=(timestamp, _short_name(filename), weight_text, source),
         )
         children = self.history.get_children("")
         if len(children) > HISTORY_MAX_ROWS:
