@@ -1,5 +1,20 @@
 # Commits
 
+## 2026-08-19 13:46 (session: build_exe.bat fallbacks)
+- **`build_exe.bat`**: hardened the build script with fallbacks and checks:
+  - Python lookup now tries `python`, then the `py` launcher (`py -3`), then
+    `python3`; clear error message if none found.
+  - cargo lookup falls back to `%USERPROFILE%\.cargo\bin\cargo.exe` (the
+    default rustup install location) when cargo is not on PATH.
+  - `SKIP_RUST=1` env var skips the Rust build step entirely (warns if the
+    backend binary is then missing).
+  - Verifies the spec file exists and that `dist\CowWeightEstimator.exe` was
+    actually produced after PyInstaller runs.
+  - If `pip install pyinstaller` fails, retries after `python -m ensurepip
+    --upgrade` before giving up.
+  - `build_exe.bat clean` passes `--clean` to PyInstaller to clear its cache.
+  - Prints the final exe size.
+
 ## 2026-08-19 13:34 (session: one-file Windows exe build)
 - **`CowWeightEstimator.spec` (new)**: PyInstaller spec for a one-file,
   windowed `CowWeightEstimator.exe`. Bundles the `aif` package, the demo cow

@@ -13,3 +13,4 @@ htmlcov/
 # Rust (backend)
 backend/target/
 target/
+/Horror
