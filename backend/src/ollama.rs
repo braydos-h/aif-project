@@ -11,9 +11,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::config::{
-    OLLAMA_MAX_RETRIES, OLLAMA_RETRY_BACKOFF_SECS,
-};
+use crate::config::OLLAMA_MAX_RETRIES;
+use crate::config::OLLAMA_RETRY_BACKOFF_SECS;
+use crate::config::Config;
 use crate::fallback::result_with_extras;
 use crate::parse::parse_structured_response;
 use crate::validate::to_base64_image;
@@ -83,7 +83,13 @@ pub fn estimate_via_ollama(
                         if attempt == OLLAMA_MAX_RETRIES {
                             return Err(Box::new(last_error.unwrap()));
                         }
-                        retry_log("Ollama response read failed", &e.to_string(), attempt);
+                        eprintln!(
+                            "Ollama response read failed ({}), retrying in {}s (attempt {}/{})",
+                            e,
+                            OLLAMA_RETRY_BACKOFF_SECS,
+                            attempt + 1,
+                            OLLAMA_MAX_RETRIES
+                        );
                         std::thread::sleep(Duration::from_secs(OLLAMA_RETRY_BACKOFF_SECS));
                         continue;
                     }
@@ -118,13 +124,22 @@ pub fn estimate_via_ollama(
             }
             Err(ureq::Error::Status(code, response)) => {
                 let error_body = response.into_string().unwrap_or_default();
-                let detail = error_detail(&error_body).unwrap_or_else(|| error_body_or_code(&error_body, code));
-                let message = format!("Ollama request failed (HTTP {}): {}", code, detail);
-                last_error = Some(OllamaError(message));
+                let detail = error_detail(&error_body)
+                    .unwrap_or_else(|| error_body_or_detail(&error_body, code));
+                last_error = Some(OllamaError(format!(
+                    "Ollama request failed (HTTP {}): {}",
+                    code, detail
+                )));
                 if code < 500 || attempt == OLLAMA_MAX_RETRIES {
                     return Err(Box::new(last_error.unwrap()));
                 }
-                retry();
+                eprintln!(
+                    "Ollama returned HTTP {}, retrying in {}s (attempt {}/{})",
+                    code,
+                    OLLAMA_RETRY_BACKOFF_SECS,
+                    attempt + 1,
+                    OLLAMA_MAX_RETRIES
+                );
                 std::thread::sleep(Duration::from_secs(OLLAMA_RETRY_BACKOFF_SECS));
             }
             Err(ureq::Error::Transport(t)) => {
@@ -135,7 +150,13 @@ pub fn estimate_via_ollama(
                 if attempt == OLLAMA_MAX_RETRIES {
                     return Err(Box::new(last_error.unwrap()));
                 }
-                retry();
+                eprintln!(
+                    "Ollama unreachable ({}), retrying in {}s (attempt {}/{})",
+                    t,
+                    OLLAMA_RETRY_BACKOFF_SECS,
+                    attempt + 1,
+                    OLLAMA_MAX_RETRIES
+                );
                 std::thread::sleep(Duration::from_secs(OLLAMA_RETRY_BACKOFF_SECS));
             }
         }
@@ -145,8 +166,6 @@ pub fn estimate_via_ollama(
         last_error.unwrap_or(OllamaError("Ollama call failed".to_string())),
     ))
 }
-
-fn retry() {}
 
 /// Extract the model text from a parsed response: `response` field, or
 /// `message.content` when a chat-style object is present.
