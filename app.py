@@ -8,9 +8,8 @@ import urllib.error
 import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.parse import urlparse
-
 
 DEFAULT_PROMPT = "Estimate this cow's weight in kilograms from the provided image."
 
@@ -40,7 +39,7 @@ def _load_env_file(filename: str = ".env") -> None:
     if not os.path.isfile(env_path):
         return
 
-    with open(env_path, "r", encoding="utf-8") as handle:
+    with open(env_path, encoding="utf-8") as handle:
         for raw_line in handle:
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -60,21 +59,21 @@ _load_env_file()
 class CowWeightEstimator:
     def __init__(
         self,
-        model: Optional[str] = None,
-        backend: Optional[str] = None,
+        model: str | None = None,
+        backend: str | None = None,
     ) -> None:
         self.ollama_url = os.environ.get("AIF_OLLAMA_URL", DEFAULT_OLLAMA_URL)
         self.ollama_api_key = os.environ.get("OLLAMA_API_KEY")
         self.model = model or os.environ.get("AIF_AI_MODEL", DEFAULT_OLLAMA_MODEL)
         self.backend = backend or os.environ.get("AIF_AI_BACKEND", "ollama")
 
-    def estimate(self, image_reference: str, prompt: Optional[str] = None) -> Dict[str, Any]:
+    def estimate(self, image_reference: str, prompt: str | None = None) -> dict[str, Any]:
         prompt_to_use = prompt or DEFAULT_PROMPT
         if self.backend == "none":
             return self._estimate_fallback(image_reference, prompt_to_use)
         return self._estimate_via_ollama(image_reference, prompt_to_use)
 
-    def _estimate_via_ollama(self, image_reference: str, prompt: str) -> Dict[str, Any]:
+    def _estimate_via_ollama(self, image_reference: str, prompt: str) -> dict[str, Any]:
         if urlparse(self.ollama_url).hostname == "ollama.com" and not self.ollama_api_key:
             raise ValueError(
                 "Ollama Cloud requires an API key. Set OLLAMA_API_KEY in .env "
@@ -133,7 +132,7 @@ class CowWeightEstimator:
             "model_response": text,
         }
 
-    def _estimate_fallback(self, image_reference: str, prompt: str) -> Dict[str, Any]:
+    def _estimate_fallback(self, image_reference: str, prompt: str) -> dict[str, Any]:
         digest = hashlib.sha256(image_reference.encode("utf-8")).hexdigest()
         normalized = int(digest[:8], 16) / 0xFFFFFFFF
         estimated_weight_kg = round(250 + (normalized * 650), 1)
@@ -148,7 +147,9 @@ class CowWeightEstimator:
     def _to_base64_image(image_reference: str) -> str:
         """Return raw base64 image bytes from a URL or a base64/data-URI string."""
         if image_reference.startswith("http://") or image_reference.startswith("https://"):
-            request = urllib.request.Request(image_reference, headers={"User-Agent": "aif-project/1.0"})
+            request = urllib.request.Request(
+                image_reference, headers={"User-Agent": "aif-project/1.0"}
+            )
             with urllib.request.urlopen(request, timeout=30) as response:
                 image_bytes = response.read()
             return base64.b64encode(image_bytes).decode("ascii")
@@ -162,7 +163,7 @@ class CowWeightEstimator:
         return stripped
 
     @staticmethod
-    def _extract_weight_from_text(text: str) -> Optional[float]:
+    def _extract_weight_from_text(text: str) -> float | None:
         """Pull a weight in kilograms out of free-form model output."""
         # Prefer an explicit "<number> kg" (case-insensitive).
         match = re.search(r"(\d+(?:\.\d+)?)\s*kg", text, re.IGNORECASE)
@@ -223,7 +224,7 @@ class EstimateHandler(BaseHTTPRequestHandler):
             logger.warning("%s: %s", code, message)
         self._send_json({"error": message, "code": code}, status=status)
 
-    def _send_json(self, payload: Dict[str, Any], status: HTTPStatus) -> None:
+    def _send_json(self, payload: dict[str, Any], status: HTTPStatus) -> None:
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(int(status))
         self.send_header("Content-Type", "application/json")
@@ -235,7 +236,7 @@ class EstimateHandler(BaseHTTPRequestHandler):
 def create_server(
     host: str = "127.0.0.1",
     port: int = 8080,
-    estimator: Optional[CowWeightEstimator] = None,
+    estimator: CowWeightEstimator | None = None,
 ) -> HTTPServer:
     server = HTTPServer((host, port), EstimateHandler)
     server.estimator = estimator or CowWeightEstimator()  # type: ignore[attr-defined]

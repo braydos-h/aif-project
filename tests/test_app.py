@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from unittest import mock
 
-from app import CowWeightEstimator, DEFAULT_PROMPT, create_server
+from app import DEFAULT_PROMPT, CowWeightEstimator, create_server
 
 
 class EstimateApiTests(unittest.TestCase):

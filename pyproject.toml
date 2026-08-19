@@ -1,0 +1,49 @@
+[project]
+name = "aif-project"
+version = "0.1.0"
+description = "Minimal API service and Windows desktop app for estimating cow weight from an image."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Brayden Habets" }]
+license = { text = "MIT" }
+keywords = ["cow", "weight", "estimation", "ollama", "tkinter"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["ruff", "pyinstaller", "coverage"]
+gui = ["pillow"]
+
+[project.urls]
+Homepage = "https://github.com/anomalyco/aif-project"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["__pycache__", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "W"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.coverage.run]
+source = ["app", "gui"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["app", "gui"]
