@@ -30,10 +30,11 @@ pub fn validate_image_bytes(image_bytes: &[u8]) -> Result<(), ImageValidationErr
         return Err(ImageValidationError("Image payload is empty".to_string()));
     }
     // WebP: RIFF....WEBP — check the WEBP tag at offset 8.
-    if image_bytes.starts_with(MAGIC_RIFF) && image_bytes.len() >= 12 {
-        if &image_bytes[8..12] == b"WEBP" {
-            return Ok(());
-        }
+    if image_bytes.starts_with(MAGIC_RIFF)
+        && image_bytes.len() >= 12
+        && &image_bytes[8..12] == b"WEBP"
+    {
+        return Ok(());
     }
     for magic in [MAGIC_JPEG, MAGIC_PNG, MAGIC_GIF87A, MAGIC_GIF89A, MAGIC_BMP] {
         if image_bytes.starts_with(magic) {
@@ -70,7 +71,7 @@ fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
             return Err("Image base64 payload is not valid base64".to_string());
         }
     }
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err("Image base64 payload is not valid base64".to_string());
     }
     base64_decode_impl(bytes).ok_or_else(|| {
@@ -152,8 +153,7 @@ fn fetch_url(url: &str) -> Result<Vec<u8>, String> {
 /// Mirrors `CowWeightEstimator._to_base64_image`.
 pub fn to_base64_image(image_reference: &str) -> Result<String, ImageValidationError> {
     if image_reference.starts_with("http://") || image_reference.starts_with("https://") {
-        let image_bytes = fetch_url(image_reference)
-            .map_err(|e| ImageValidationError(e))?;
+        let image_bytes = fetch_url(image_reference).map_err(ImageValidationError)?;
         validate_image_bytes(&image_bytes)?;
         return Ok(base64_encode(&image_bytes));
     }
@@ -168,8 +168,7 @@ pub fn to_base64_image(image_reference: &str) -> Result<String, ImageValidationE
         }
     }
 
-    let decoded = decode_base64(stripped)
-        .map_err(|msg| ImageValidationError(msg))?;
+    let decoded = decode_base64(stripped).map_err(ImageValidationError)?;
     validate_image_bytes(&decoded)?;
     Ok(stripped.to_string())
 }
@@ -225,10 +224,7 @@ mod tests {
 
     #[test]
     fn rejects_non_image_bytes() {
-        assert!(matches!(
-            validate_image_bytes(b"ABC"),
-            Err(_)
-        ));
+        assert!(validate_image_bytes(b"ABC").is_err());
         assert!(validate_image_bytes(&png_bytes()).is_ok());
     }
 

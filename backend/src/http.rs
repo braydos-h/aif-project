@@ -66,7 +66,7 @@ fn new_request_id() -> String {
         .unwrap_or_default()
         .as_nanos();
     let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
-    sha2::Digest::update(&mut hasher, &nanos.to_le_bytes());
+    sha2::Digest::update(&mut hasher, nanos.to_le_bytes());
     let digest = sha2::Digest::finalize(hasher);
     let mut out = String::with_capacity(8);
     for b in digest.iter().take(4) {
@@ -168,7 +168,7 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
     if reader.read_line(&mut request_line)? == 0 {
         return Ok(()); // client closed before sending anything
     }
-    let mut parts = request_line.trim_end().split_whitespace();
+    let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
 
