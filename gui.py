@@ -300,19 +300,21 @@ class CowWeightApp:
             self.root.after(
                 0,
                 self._show_demo_result,
-                result["estimated_weight_kg"],
-                result["source"],
-                result.get("model_response", ""),
+                result,
                 filename,
             )
         self.root.after(0, self._finish_demo_run)
 
-    def _show_demo_result(
-        self, weight_kg: float, source: str, reply: str, filename: str
-    ) -> None:
-        self.result_text.set(f"Last demo cow: {_short_name(filename)} → {weight_kg:g} kg")
-        self._set_reply(reply)
-        self._add_history(weight_kg, source, filename)
+    def _show_demo_result(self, result: dict, filename: str) -> None:
+        weight_kg = result["estimated_weight_kg"]
+        weight_lbs = result.get("estimated_weight_lbs")
+        if weight_lbs is not None:
+            weight_str = f"{weight_kg:g} kg / {weight_lbs:g} lbs"
+        else:
+            weight_str = f"{weight_kg:g} kg"
+        self.result_text.set(f"Last demo cow: {_short_name(filename)} → {weight_str}")
+        self._set_reply(result.get("model_response", ""))
+        self._add_history(weight_kg, result["source"], filename)
 
     def _finish_demo_run(self) -> None:
         self.progress.stop()
