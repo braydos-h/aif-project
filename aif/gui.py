@@ -33,7 +33,13 @@ import tkinter as tk
 import webbrowser
 from tkinter import filedialog, messagebox, ttk
 
-from .config import DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, DEFAULT_PROMPT, setup_logging
+from .config import (
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_OLLAMA_URL,
+    DEFAULT_PROMPT,
+    repo_root,
+    setup_logging,
+)
 from .estimator import CowWeightEstimator
 
 try:
@@ -50,8 +56,9 @@ PREVIEW_SIZE = (160, 160)
 HISTORY_COLUMNS = ("time", "image", "weight", "source")
 HISTORY_MAX_ROWS = 20
 BACKEND_CHOICES = ("ollama", "none")
-# Repository root: the parent of the aif/ package. Demo cows live at ./cows.
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Bundled data root: the repository root in a checkout, the PyInstaller
+# extraction dir in a frozen exe. Demo cows live at ./cows.
+REPO_ROOT = repo_root()
 DEMO_COW_DIR = os.path.join(REPO_ROOT, "cows")
 DEMO_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif")
 

@@ -23,6 +23,7 @@ from .config import (
     OLLAMA_MAX_RETRIES,
     OLLAMA_RETRY_BACKOFF,
     VERSION,
+    repo_root,
     setup_logging,
 )
 from .estimator import CowWeightEstimator, ImageValidationError
@@ -39,5 +40,6 @@ __all__ = [
     "OLLAMA_MAX_RETRIES",
     "OLLAMA_RETRY_BACKOFF",
     "VERSION",
+    "repo_root",
     "setup_logging",
 ]

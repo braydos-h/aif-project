@@ -8,6 +8,7 @@ over ``.env``.
 
 import logging
 import os
+import sys
 
 DEFAULT_PROMPT = (
     "Estimate this cow's weight in kilograms from the provided image. "
@@ -47,6 +48,31 @@ logger = logging.getLogger("aif")
 VERSION = "0.1.0"
 
 
+def repo_root() -> str:
+    """Return the directory holding bundled data (``cows/``, bundled ``.env``).
+
+    In a normal checkout this is the repository root (the parent of the
+    ``aif`` package). Inside a PyInstaller onefile exe, ``__file__`` points
+    into the temporary extraction dir, so return ``sys._MEIPASS`` instead —
+    that is where bundled data lands. In a PyInstaller onedir exe the
+    ``__file__`` paths still work, so the real code path is preferred there.
+    """
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _env_candidates(filename: str) -> tuple[str, ...]:
+    """Locations probed for the ``.env`` file, in priority order.
+
+    Next to the running exe (a PyInstaller build), then next to the aif
+    package (repo root / source tree), then inside a PyInstaller bundle.
+    """
+    executable_dir = os.path.dirname(os.path.abspath(sys.executable))
+    return (os.path.join(executable_dir, filename), os.path.join(repo_root(), filename))
+
+
+
 def setup_logging(level: str = "INFO") -> None:
     """Configure the root logger for both the server and the GUI."""
     logging.basicConfig(
@@ -59,28 +85,29 @@ def _load_env_file(filename: str = ".env") -> None:
     """Load a .env file into os.environ without overriding existing values.
 
     Standard library only — mirrors python-dotenv's basic behavior so the
-    project stays dependency-free. Looks for the file in the repository root
-    (the parent of the ``aif`` package). Lines like ``KEY=value`` are parsed;
-    blank lines and ``#`` comments are ignored. Quoted values have the quotes
-    stripped.
+    project stays dependency-free. Looks next to the running executable
+    (so a packaged exe can be configured without rebuilding) and in the
+    repository root (the parent of the ``aif`` package), in that order.
+    Lines like ``KEY=value`` are parsed; blank lines and ``#`` comments are
+    ignored. Quoted values have the quotes stripped.
     """
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    env_path = os.path.join(repo_root, filename)
-    if not os.path.isfile(env_path):
-        return
+    for env_path in _env_candidates(filename):
+        if not os.path.isfile(env_path):
+            continue
 
-    with open(env_path, encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-                value = value[1:-1]
-            if key and key not in os.environ:
-                os.environ[key] = value
+        with open(env_path, encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                    value = value[1:-1]
+                if key and key not in os.environ:
+                    os.environ[key] = value
+        return
 
 
 _load_env_file()
