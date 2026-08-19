@@ -468,3 +468,6 @@
   exception logging with `mock.patch("app.logger")` and assert the logger
   was called, keeping the test run output clean. Suite at 43 tests, all
   passing; `ruff check .` clean.
+
+### 2026-08-19 13:09 - Add Ollama API key field to GUI
+- Added a masked 'API key' entry to the GUI selector area (aif/gui.py), pre-filled from the OLLAMA_API_KEY env var and passed to the estimator on every request.

@@ -96,6 +96,7 @@ class CowWeightApp:
         self.backend_var = tk.StringVar(value=CowWeightEstimator().backend)
         self.model_var = tk.StringVar(value=DEFAULT_OLLAMA_MODEL)
         self.url_var = tk.StringVar(value=DEFAULT_OLLAMA_URL)
+        self.api_key_var = tk.StringVar(value=os.environ.get("OLLAMA_API_KEY", ""))
         self.preview_image: ImageTk.PhotoImage | None = None  # keep ref
         self.last_request: tuple | None = None
 
@@ -105,7 +106,7 @@ class CowWeightApp:
     def _build_layout(self) -> None:
         """Create every widget and lay it out on a grid.
 
-        Rows 0–14: title, image picker, preview, backend/model/URL
+        Rows 0–14: title, image picker, preview, backend/model/URL/API key
         selectors, prompt, buttons, status, result, model reply, history,
         footer. The history treeview is the only row that stretches.
         """
@@ -157,6 +158,11 @@ class CowWeightApp:
         url_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
         self.url_entry = ttk.Entry(selector_frame, textvariable=self.url_var)
         self.url_entry.grid(row=1, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+
+        key_label = ttk.Label(selector_frame, text="API key")
+        key_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        self.key_entry = ttk.Entry(selector_frame, textvariable=self.api_key_var, show="*")
+        self.key_entry.grid(row=2, column=1, columnspan=3, sticky="ew", pady=(8, 0))
 
         # --- Prompt ---
         ttk.Label(frame, text="Prompt (optional)").grid(row=5, column=0, sticky="w", pady=(14, 4))
@@ -293,6 +299,7 @@ class CowWeightApp:
         backend = self.backend_var.get()
         model = self.model_var.get().strip() or DEFAULT_OLLAMA_MODEL
         ollama_url = self.url_var.get().strip() or DEFAULT_OLLAMA_URL
+        api_key = self.api_key_var.get().strip()
         self.estimate_button.configure(state="disabled")
         self.copy_button.configure(state="disabled")
         self.retry_button.configure(state="disabled")
@@ -301,10 +308,10 @@ class CowWeightApp:
         self._set_reply("")
         self.progress.start(10)
         start_time = time.monotonic()
-        self.last_request = (filename, prompt, backend, model, ollama_url)
+        self.last_request = (filename, prompt, backend, model, ollama_url, api_key)
         threading.Thread(
             target=self._estimate_in_background,
-            args=(filename, prompt, backend, model, ollama_url, start_time),
+            args=(filename, prompt, backend, model, ollama_url, api_key, start_time),
             daemon=True,
         ).start()
 
@@ -331,7 +338,8 @@ class CowWeightApp:
         backend = self.backend_var.get()
         model = self.model_var.get().strip() or DEFAULT_OLLAMA_MODEL
         ollama_url = self.url_var.get().strip() or DEFAULT_OLLAMA_URL
-        self.last_request = ("demo", prompt, backend, model, ollama_url)
+        api_key = self.api_key_var.get().strip()
+        self.last_request = ("demo", prompt, backend, model, ollama_url, api_key)
         self.estimate_button.configure(state="disabled")
         self.demo_button.configure(state="disabled")
         self.copy_button.configure(state="disabled")
@@ -341,17 +349,25 @@ class CowWeightApp:
         self.progress.start(10)
         threading.Thread(
             target=self._estimate_demo_cows_in_background,
-            args=(demo_files, prompt, backend, model, ollama_url),
+            args=(demo_files, prompt, backend, model, ollama_url, api_key),
             daemon=True,
         ).start()
 
     def _estimate_demo_cows_in_background(
-        self, demo_files: list[str], prompt: str, backend: str, model: str, ollama_url: str
+        self,
+        demo_files: list[str],
+        prompt: str,
+        backend: str,
+        model: str,
+        ollama_url: str,
+        api_key: str,
     ) -> None:
         """Background thread body for the demo-cow run: estimate each file
         in order and report results back to the UI thread via ``after``.
         Stops at the first error."""
-        estimator = CowWeightEstimator(backend=backend, model=model, ollama_url=ollama_url)
+        estimator = CowWeightEstimator(
+            backend=backend, model=model, ollama_url=ollama_url, api_key=api_key
+        )
         for index, filename in enumerate(demo_files, start=1):
             message = f"Estimating {_short_name(filename)} ({index}/{len(demo_files)})…"
             self.root.after(0, self.status_text.set, message)
@@ -398,6 +414,7 @@ class CowWeightApp:
         backend: str,
         model: str,
         ollama_url: str,
+        api_key: str,
         start_time: float,
     ) -> None:
         """Background thread body for a single estimate: build a fresh
@@ -405,7 +422,7 @@ class CowWeightApp:
         thread via ``after``."""
         try:
             estimator = CowWeightEstimator(
-                backend=backend, model=model, ollama_url=ollama_url
+                backend=backend, model=model, ollama_url=ollama_url, api_key=api_key
             )
             result = estimator.estimate(image_file_to_data_uri(filename), prompt)
         except (OSError, ValueError) as exc:

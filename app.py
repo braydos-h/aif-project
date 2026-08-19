@@ -1,51 +1,57 @@
-"""Backward-compatible entry point for the HTTP API server.
+"""Entry point for the HTTP API server.
 
-The actual server lives in ``aif.server``; this wrapper keeps
-``python app.py`` working unchanged. Prefer importing from ``aif``:
-``from aif import CowWeightEstimator, create_server``.
+``python app.py`` launches the Rust backend (``backend/``, crate
+``aif-backend``) which serves the same API the Python server used to: a
+threaded HTTP/1.1 server with per-request parallelism. If the release binary
+is missing, prints build instructions and exits.
+
+Env var ``AIF_BACKEND_BIN`` overrides the binary path (useful for tests and
+CI). Default is ``backend/target/release/aif-backend(.exe)`` relative to
+this repository.
 """
 
-from aif import (
-    DEFAULT_CACHE_TTL,
-    DEFAULT_OLLAMA_MODEL,
-    DEFAULT_OLLAMA_URL,
-    DEFAULT_PROMPT,
-    IMAGE_MAGIC_BYTES,
-    KG_TO_LBS,
-    OLLAMA_MAX_RETRIES,
-    OLLAMA_RETRY_BACKOFF,
-    VERSION,
-    CowWeightEstimator,
-    EstimateHandler,
-    ImageValidationError,
-    create_server,
-    setup_logging,
-)
+import os
+import subprocess
+import sys
 
-__all__ = [
-    "CowWeightEstimator",
-    "DEFAULT_CACHE_TTL",
-    "DEFAULT_OLLAMA_MODEL",
-    "DEFAULT_OLLAMA_URL",
-    "DEFAULT_PROMPT",
-    "EstimateHandler",
-    "IMAGE_MAGIC_BYTES",
-    "ImageValidationError",
-    "KG_TO_LBS",
-    "OLLAMA_MAX_RETRIES",
-    "OLLAMA_RETRY_BACKOFF",
-    "VERSION",
-    "create_server",
-    "setup_logging",
-]
+from aif import VERSION
+
+BINARY_NAMES = ("aif-backend.exe", "aif-backend")
+
+
+def _repo_root() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def find_binary() -> str:
+    """Locate the Rust backend binary, honoring ``AIF_BACKEND_BIN``."""
+    override = os.environ.get("AIF_BACKEND_BIN")
+    if override:
+        return override
+    candidates = []
+    for name in BINARY_NAMES:
+        candidates.append(os.path.join(_repo_root(), "backend", "target", "release", name))
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError(
+        "Rust backend binary not found. Build it with:\n"
+        "    cargo build --release --manifest-path backend/Cargo.toml"
+    )
 
 
 def main() -> None:
-    """Start the HTTP API server on 127.0.0.1:8080."""
-    setup_logging()
-    server = create_server()
-    print("Cow weight estimation API listening on http://127.0.0.1:8080")
-    server.serve_forever()
+    """Start the Rust HTTP API server on 127.0.0.1:8080."""
+    try:
+        binary = find_binary()
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+    print(
+        f"Cow weight estimation API (aif-backend {VERSION}) "
+        f"listening on http://127.0.0.1:8080"
+    )
+    subprocess.run([binary, "--host", "127.0.0.1", "--port", "8080"], check=False)
 
 
 if __name__ == "__main__":

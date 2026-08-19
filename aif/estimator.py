@@ -75,6 +75,8 @@ class CowWeightEstimator:
             ``AIF_OLLAMA_URL`` or ``DEFAULT_OLLAMA_URL``.
         cache_ttl: Seconds to cache ollama results per image (0 disables).
             Defaults to ``AIF_CACHE_TTL`` or ``DEFAULT_CACHE_TTL``.
+        api_key: Ollama API key (Bearer token). Defaults to the
+            ``OLLAMA_API_KEY`` env var.
 
     Backends:
         - ``ollama`` — POSTs the image (base64) and prompt to the Ollama
@@ -104,9 +106,10 @@ class CowWeightEstimator:
         backend: str | None = None,
         ollama_url: str | None = None,
         cache_ttl: int | None = None,
+        api_key: str | None = None,
     ) -> None:
         self.ollama_url = ollama_url or os.environ.get("AIF_OLLAMA_URL", DEFAULT_OLLAMA_URL)
-        self.ollama_api_key = os.environ.get("OLLAMA_API_KEY")
+        self.ollama_api_key = api_key or os.environ.get("OLLAMA_API_KEY")
         self.model = model or os.environ.get("AIF_AI_MODEL", DEFAULT_OLLAMA_MODEL)
         self.backend = backend or os.environ.get("AIF_AI_BACKEND", "ollama")
         if cache_ttl is None:

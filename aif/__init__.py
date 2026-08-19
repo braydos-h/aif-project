@@ -3,12 +3,13 @@
 A dependency-free package split into focused modules:
 
 - ``aif.config`` — constants, defaults, and the stdlib-only ``.env`` loader.
-- ``aif.estimator`` — ``CowWeightEstimator`` (backend-agnostic estimation).
-- ``aif.server`` — HTTP API (``EstimateHandler`` + ``create_server``).
+- ``aif.estimator`` — ``CowWeightEstimator`` (backend-agnostic estimation,
+  used in-process by the desktop GUI).
 - ``aif.gui`` — Tkinter desktop app (``CowWeightApp``).
 
-Entry points ``app.py`` and ``gui.py`` at the repository root are thin
-wrappers around ``aif.server`` and ``aif.gui`` so ``python app.py`` and
+The HTTP API now runs on the Rust backend in ``backend/`` (``aif-backend``);
+``app.py`` at the repository root launches that binary. Entry points
+``app.py`` and ``gui.py`` are thin wrappers so ``python app.py`` and
 ``python gui.py`` keep working unchanged.
 """
 
@@ -25,7 +26,6 @@ from .config import (
     setup_logging,
 )
 from .estimator import CowWeightEstimator, ImageValidationError
-from .server import EstimateHandler, create_server
 
 __all__ = [
     "CowWeightEstimator",
@@ -33,13 +33,11 @@ __all__ = [
     "DEFAULT_OLLAMA_MODEL",
     "DEFAULT_OLLAMA_URL",
     "DEFAULT_PROMPT",
-    "EstimateHandler",
     "IMAGE_MAGIC_BYTES",
     "ImageValidationError",
     "KG_TO_LBS",
     "OLLAMA_MAX_RETRIES",
     "OLLAMA_RETRY_BACKOFF",
     "VERSION",
-    "create_server",
     "setup_logging",
 ]
