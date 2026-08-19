@@ -595,3 +595,10 @@
 
 ### 2026-08-19 13:09 - Add Ollama API key field to GUI
 - Added a masked 'API key' entry to the GUI selector area (aif/gui.py), pre-filled from the OLLAMA_API_KEY env var and passed to the estimator on every request.
+
+## 2026-08-19 16:20 — Expand project portfolio presentation
+- Created a 20-slide expanded PowerPoint portfolio deck from the supplied presentation.
+- Added a project architecture overview, request flow, reliability features, deterministic offline testing, verification strategy, commit-history timeline and evidence-focused next steps.
+
+## 2026-08-19 16:21 (session: README rewrite)
+- Rewrote README.md end-to-end (prose only): tightened the Highlights, Requirements, and Quick start sections, and reworded the API reference, Configuration, Testing, Architecture, Releases, and Notes sections into plainer prose. Kept all facts, examples, tables, and code blocks; no code changes.
