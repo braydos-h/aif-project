@@ -16,16 +16,21 @@ is included for testing and air-gapped use.
   double-clickable Windows GUI for interactive use. Both share the same
   `CowWeightEstimator` and `.env` configuration.
 - **Zero runtime dependencies.** Pure standard library (`http.server`,
-  `urllib`, `hashlib`, `base64`, `re`). Loads its own `.env` at startup via a
-  stdlib-only loader, so no `python-dotenv` either.
+  `urllib`, `hashlib`, `base64`, `re`, `logging`, `tkinter`). Loads its own
+  `.env` at startup via a stdlib-only loader, so no `python-dotenv` either.
+  Pillow is optional — if installed, the GUI shows an image preview; if not,
+  it degrades to showing the filename and byte size.
 - **Pluggable backend.** `ollama` (vision model via Ollama Cloud, default) or
-  `none` (stable SHA-256-derived local estimate, no network).
+  `none` (stable SHA-256-derived local estimate, no network). The GUI exposes
+  a backend/model selector so you can switch at runtime without editing `.env`.
 - **Robust input handling.** Accepts `image_url` or raw/base64 `image_base64`,
   including `data:` URIs. Strips WebP data-URI prefixes even when Windows labels
   them `application/octet-stream`.
+- **Structured errors.** Every error response carries a machine-readable `code`
+  field (`missing_image`, `estimation_failed`, …) alongside the human message.
 - **Tested.** Full HTTP request/response suite (real server on a background
   thread, not in-process calls) plus unit tests for weight extraction, backend
-  selection, and bearer-token auth.
+  selection, bearer-token auth, and a GUI smoke test.
 - **One-file Windows `.exe`.** A GitHub Actions workflow builds a standalone
   `CowWeightEstimator.exe` with PyInstaller on every published release.
 
@@ -50,10 +55,13 @@ Double-click `start_gui.bat`, or run:
 python gui.py
 ```
 
-Pick a cow image, tweak the prompt if you like, and select **Estimate weight**.
-The estimate runs on a background thread so the window stays responsive. No
-command window, no separate server to keep running — the GUI calls the
-estimator directly.
+Pick a cow image, tweak the prompt if you like, pick a backend and model, and
+select **Estimate weight** (or press `Enter`). The estimate runs on a
+background thread so the window stays responsive; a progress bar indicates
+activity. The result, the model's full reply, and a session-only history of
+the last 20 estimates are shown in the window. A **Copy result** button puts
+the weight on the clipboard. No command window, no separate server to keep
+running — the GUI calls the estimator directly.
 
 ### HTTP API server
 
@@ -92,8 +100,9 @@ curl -s http://127.0.0.1:8080/estimate-weight \
 {
   "estimated_weight_kg": 612.0,
   "source": "ollama",
-  "model": "gemma4:31b",
-  "prompt_used": "Estimate this cow's weight in kg."
+  "model": "gemma4:31b-cloud",
+  "prompt_used": "Estimate this cow's weight in kg.",
+  "model_response": "This cow appears to weigh about 612 kg..."
 }
 ```
 
@@ -113,6 +122,7 @@ curl -s http://127.0.0.1:8080/estimate-weight \
 | `source`               | string  | yes            | `ollama` or `local_fallback`.                                            |
 | `model`                | string  | ollama only    | The model name used.                                                     |
 | `prompt_used`          | string  | yes            | The prompt actually sent (useful when the default was applied).         |
+| `model_response`       | string  | yes            | Raw model text (empty string for the local fallback).                    |
 
 #### Status codes
 
@@ -123,7 +133,9 @@ curl -s http://127.0.0.1:8080/estimate-weight \
 | `404`  | Unknown path (only `POST /estimate-weight` is served).               |
 | `502`  | Estimator failure — backend unreachable, no key, or unparseable reply. |
 
-Any other method or path returns `404`.
+Every error response includes a machine-readable `code` field alongside the
+human `error` message: `missing_body`, `invalid_json`, `missing_image`,
+`not_found`, or `estimation_failed`. Any other method or path returns `404`.
 
 ---
 
@@ -138,7 +150,7 @@ server has started have no effect — restart to pick up new config.
 | ------------------ | -------------------------------- | ---------------- | --------------------------------------------------------------------------- |
 | `AIF_AI_BACKEND`   | `ollama`                         | both             | `ollama` (Ollama Cloud) or `none` (deterministic local fallback).          |
 | `AIF_OLLAMA_URL`   | `https://ollama.com/api/generate` | ollama           | Ollama Cloud generate endpoint.                                            |
-| `AIF_AI_MODEL`     | `gemma4:31b`                      | ollama           | Model name sent in the request.                                            |
+| `AIF_AI_MODEL`     | `gemma4:31b-cloud`               | ollama           | Model name sent in the request.                                            |
 | `OLLAMA_API_KEY`   | _(none)_                         | ollama (cloud)   | Bearer token. Required when `AIF_OLLAMA_URL` points at `ollama.com`.       |
 
 ### Setting up Ollama Cloud
@@ -152,12 +164,13 @@ server has started have no effect — restart to pick up new config.
 
 3. Ensure `AIF_AI_BACKEND=ollama` (it's the default).
 
-The default model is `gemma4:31b`, the direct-cloud API name. The
-`gemma4:31b-cloud` alias only works through a local Ollama runtime, not the
-direct cloud endpoint — use `gemma4:31b` for this service.
+The default model is `gemma4:31b-cloud`, the direct-cloud API name. The
+`gemma4:31b` tag is a 20GB local-runtime download and will not work against the
+cloud endpoint — use `gemma4:31b-cloud` for this service.
 
-> Do not commit a real API key. `.env` is checked in here with a placeholder
-> only; replace it locally and keep your key out of version control.
+> Do not commit a real API key. `.env` is gitignored; a sanitized
+> `.env.example` is committed as a template. Copy it to `.env` and fill in your
+> key.
 
 ### Offline / no-network mode
 
@@ -173,13 +186,16 @@ air-gapped environments. Reports `source == "local_fallback"`.
 python -m unittest discover -s tests -v
 ```
 
-The HTTP-level tests boot a real `create_server(port=0)` on a background
-thread and exercise it over real sockets (not in-process handler calls), so
-they validate status codes, JSON serialization, and the full request path.
-They force `backend="none"` to stay deterministic and avoid a running LLM.
-A separate `OllamaEstimatorTests` class covers weight extraction, data-URI
-stripping, backend selection, and bearer-token auth via `unittest.mock` — the
-live Ollama network path is not exercised.
+The HTTP-level tests boot a real `create_server(port=0, estimator=...)` on a
+background thread and exercise it over real sockets (not in-process handler
+calls), so they validate status codes, JSON serialization, and the full request
+path. They force `backend="none"` to stay deterministic and avoid a running LLM.
+A 502 test forces `backend="ollama"` with no key and asserts
+`code == "estimation_failed"`. A separate `OllamaEstimatorTests` class covers
+weight extraction, data-URI stripping, backend selection, and bearer-token auth
+via `unittest.mock` — the live Ollama network path is not exercised.
+`GuiSmokeTests` builds the Tk root + `CowWeightApp` and destroys it, catching
+import/layout regressions in `gui.py` without an interactive display.
 
 Run a single test:
 
@@ -187,7 +203,12 @@ Run a single test:
 python -m unittest tests.test_app.EstimateApiTests.test_estimate_weight_with_image_url -v
 ```
 
-There is no linter or formatter configured.
+Lint with ruff (configured in `pyproject.toml`):
+
+```powershell
+ruff check .
+ruff check --fix .
+```
 
 ---
 
@@ -198,9 +219,11 @@ There is no linter or formatter configured.
 ├── app.py                       # HTTP API + CowWeightEstimator (the core)
 ├── gui.py                       # Tkinter desktop app, reuses app.CowWeightEstimator
 ├── start_gui.bat                # Double-click launcher (pythonw, no console window)
-├── .env                         # Local config (committed with placeholders only)
+├── pyproject.toml               # Project metadata + ruff config
+├── .env.example                 # Template for local config (committed)
+├── .env                         # Local config (gitignored, not committed)
 ├── tests/
-│   └── test_app.py               # HTTP + estimator unit tests
+│   └── test_app.py               # HTTP + estimator + GUI smoke tests
 └── .github/workflows/
     └── build-windows.yml         # Release build: tests + PyInstaller .exe upload
 ```
@@ -215,11 +238,17 @@ Two layers, both in `app.py`:
   `estimate()` dispatches on the configured backend.
 - **`EstimateHandler`** — a `BaseHTTPRequestHandler` subclass. Only
   `POST /estimate-weight` is valid; anything else returns `404`. The estimator
-  is a class attribute, so it's built once at import time using env/`.env`.
+  is injected via `create_server(host, port, estimator=None)` and read off
+  `self.server.estimator` — no shared class attribute. Access and error logs
+  go through the `aif` logger.
 
 The GUI (`gui.py`) does not start the HTTP server. It instantiates
-`CowWeightEstimator` directly and runs the call on a background thread so the
-Tk event loop never blocks.
+`CowWeightEstimator` directly (with the backend/model selected in the UI) and
+runs the call on a background thread so the Tk event loop never blocks. Image
+preview uses Pillow if importable, otherwise degrades to showing the filename
+and byte size. Keyboard: `Enter` estimates (in the prompt box, use `Ctrl+Enter`
+to keep newlines free). A session-only history panel keeps the last 20
+estimates.
 
 ---
 
