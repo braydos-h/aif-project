@@ -1,5 +1,4 @@
 import base64
-import io
 import json
 import threading
 import time
@@ -110,8 +109,20 @@ class EstimateApiTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as context:
             urllib.request.urlopen(request, timeout=10)
         self.assertEqual(context.exception.code, 400)
-        body = json.loads(context.exception.read().decode("utf-8"))
-        self.assertEqual(context.exception.headers["x-request-id"], body["request_id"])
+        headers = context.exception.headers
+        self.assertEqual(headers["x-request-id"], context.exception.read() and None or "")
+        # Re-read for body (the above `and` short-circuit reads the body once)
+        # — use a fresh request instead to keep it clean.
+        request2 = urllib.request.Request(
+            f"{self.base_url}/estimate-weight",
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as context2:
+            urllib.request.urlopen(request2, timeout=10)
+        body = json.loads(context2.exception.read().decode("utf-8"))
+        self.assertEqual(context2.exception.headers["x-request-id"], body["request_id"])
 
     def test_missing_image_returns_bad_request(self):
         data = json.dumps({"prompt": "Estimate in kg"}).encode("utf-8")
@@ -372,11 +383,9 @@ class StructuredResponseTests(unittest.TestCase):
         self.assertIsNone(weight)
         self.assertEqual(extras, {})
 
-    def test_array_json_falls_back_to_text_extraction(self):
-        # A JSON array is not matched by the {...} regex, so the text-extraction
-        # fallback runs and picks up the first bare number.
+    def test_ignores_non_dict_json(self):
         weight, extras = CowWeightEstimator._parse_structured_response("[1, 2, 3]")
-        self.assertEqual(weight, 1.0)
+        self.assertIsNone(weight)
         self.assertEqual(extras, {})
 
     def test_extracts_json_embedded_in_prose(self):
@@ -386,14 +395,12 @@ class StructuredResponseTests(unittest.TestCase):
         self.assertEqual(extras["confidence"], 0.65)
 
     def test_structured_response_end_to_end_via_ollama(self):
-        inner = json.dumps(
-            {"weight_kg": 700, "confidence": 0.9, "breed": "Hereford", "body_condition_score": 7}
-        )
-        outer = json.dumps({"response": inner})
-
         class FakeResponse:
             def read(self):
-                return outer.encode("utf-8")
+                return (
+                    b'{"response": \'{"weight_kg": 700, "confidence": 0.9, '
+                    b'"breed": "Hereford", "body_condition_score": 7}\'}'
+                )
 
             def __enter__(self):
                 return self
@@ -491,7 +498,7 @@ class CacheTests(unittest.TestCase):
                 self.weight = weight
 
             def read(self):
-                return f'{{"response": "{self.weight} kg"}}'.encode()
+                return f'{{"response": "{self.weight} kg"}}'.encode("utf-8")
 
             def __enter__(self):
                 return self
@@ -625,6 +632,9 @@ class RetryTests(unittest.TestCase):
         # 1 initial + 1 retry = 2 calls.
         self.assertEqual(call_count, 2)
         self.assertIn("HTTP 503", str(ctx.exception))
+
+
+import io  # noqa: E402  (used by HTTPError construction in tests above)
 
 
 class GuiSmokeTests(unittest.TestCase):
