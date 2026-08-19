@@ -112,7 +112,7 @@ fn with_request_id(payload: Value, request_id: &str) -> Value {
     if payload.get("request_id").is_some() {
         return payload;
     }
-    if let Some(mut obj) = payload.as_object() {
+    if let Some(obj) = payload.as_object() {
         let mut obj = obj.clone();
         obj.insert("request_id".to_string(), Value::from(request_id));
         return Value::Object(obj);
@@ -159,9 +159,8 @@ fn write_response(
 /// response. One connection = one request (Connection: close), matching the
 /// old Python server's keep-alive-free behavior.
 fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Result<()> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .set_write_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
     let request_id = new_request_id();
     let mut reader = BufReader::new(stream.try_clone()?);
 
@@ -206,20 +205,6 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
 
     let response = dispatch(&method, &path, &body, &request_id, state);
     write_response(&mut stream, &request_id, &response)
-}
-
-fn send_error(
-    stream: &mut TcpStream,
-    request_id: &str,
-    code: &str,
-    message: &str,
-    status: u16,
-) -> std::io::Result<()> {
-    write_response(
-        stream,
-        request_id,
-        &Response::json(status, error_json(code, message, request_id)),
-    )
 }
 
 /// Dispatch a request to the right handler.

@@ -10,13 +10,14 @@ use crate::config::{kg_to_lbs, round1};
 /// Build the fallback estimate dict for an image reference.
 ///
 /// The digest formula must match `aif/estimator.py`:
-/// `int(sha256(reference)[:8], 16) / 0xFFFFFFFF` → 250 + ratio * 650.
+/// `int(sha256(reference).hexdigest()[:8], 16) / 0xFFFFFFFF` → 250 + ratio * 650.
 pub fn estimate_fallback(image_reference: &str, prompt: &str) -> Value {
     let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
     sha2::Digest::update(&mut hasher, image_reference.as_bytes());
     let digest = sha2::Digest::finalize(hasher);
-    let first_8 = &digest[..8];
-    let raw: u32 = u32::from_be_bytes(first_8.try_into().unwrap());
+    // First 8 hex chars of the digest = first 4 bytes.
+    let first_4 = &digest[..4];
+    let raw: u32 = u32::from_be_bytes(first_4.try_into().unwrap());
     let normalized = raw as f64 / u32::MAX as f64;
     let weight_kg = round1(250.0 + normalized * 650.0);
 

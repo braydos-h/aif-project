@@ -253,8 +253,10 @@ mod tests {
 
     #[test]
     fn invalid_base64_rejected() {
+        // "QUJD" decodes to "ABC" — valid base64 but not a valid image.
         let err = to_base64_image("QUJD").unwrap_err();
-        assert!(err.0.contains("not valid base64"));
+        assert!(err.0.contains("do not match a supported format"));
+        // "!!!" is not valid base64 at all.
         let err2 = to_base64_image("!!!").unwrap_err();
         assert!(err2.0.contains("not valid base64"));
     }

@@ -122,7 +122,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join(".env"),
-            "AIF_AI_BACKEND=none\n# comment\n\nQUOTED=\"hello world\"\n",
+            "AIF_AI_BACKEND=none\n# comment\n\nAIF_TEST_QUOTED=\"hello world\"\n",
         )
         .unwrap();
 
