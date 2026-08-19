@@ -1,5 +1,20 @@
 # Commits
 
+## 2026-08-19 14:30
+- Applied ponytail-audit cuts to `app.py`: removed the unused `custom` backend
+  (`_estimate_via_custom_api`, `BACKEND_CUSTOM`, the `api_url`/`api_key`
+  constructor params, and `X-API-Key`/three-key response guessing), inlined the
+  single-caller `_is_ollama_cloud_url` helper, dropped the `BACKEND_OLLAMA` and
+  `BACKEND_NONE` constants in favor of string literals, and removed the unused
+  `Tuple` import. Net ~47 lines removed.
+- Removed `test_custom_api_url_selects_custom_backend` and the now-irrelevant
+  `api_url=None` argument from `test_default_backend_is_ollama` in
+  `tests/test_app.py`. All 12 tests pass.
+- Updated `AGENTS.md`, `CLAUDE.md`, `README.md`, and `.env` to drop `custom`
+  backend references; also corrected AGENTS.md/CLAUDE.md's stale
+  localhost/llava wording for the `ollama` backend to match the actual Ollama
+  Cloud default.
+
 ## 2026-08-19 11:56
 - Added `.github/workflows/build-windows.yml` GitHub Actions workflow that
   triggers on release publish, runs the test suite on `windows-latest`,
