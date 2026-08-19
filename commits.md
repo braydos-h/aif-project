@@ -1,5 +1,10 @@
 # Commits
 
+## 2026-08-19 (session: commits.md append rule)
+- Added a rule to `AGENTS.md`: whenever an agent adds or changes code, it MUST
+  append a new entry to `commits.md` (with date and time) — only append, never
+  overwrite, rewrite, or delete existing entries.
+
 ## 2026-08-19 12:42 (session: API polish + smarter estimator)
 - **Bundle A — API polish (`app.py`):**
   - Added `GET /health` → `{"status":"ok","backend","model","request_id"}` and
