@@ -1,5 +1,16 @@
 # Commits
 
+## 2026-08-19 (session: docs for newcomers)
+- Added CONTRIBUTING.md with conventions, repository layout, commands,
+  and step-by-step guides for common changes (new backend, new endpoint,
+  weight-parsing changes, GUI features) plus testing notes and a
+  pre-commit checklist. Linked from README.md, AGENTS.md, and CLAUDE.md.
+- Added module-level docstrings to `app.py` (with "how to add a backend /
+  endpoint" sections) and `gui.py` (threading model + how to extend the
+  UI), and docstrings for every class and method in both files.
+- Added `CONTRIBUTING.md` to the README project-structure tree.
+- All 43 tests pass; `ruff check .` is clean.
+
 ## 2026-08-19 (session: demo cow test button)
 - Added a "Test demo cows" button to the GUI (`gui.py`) that runs the
   estimator over every image in the `cows/` folder (sorted, jpg/webp/etc.),

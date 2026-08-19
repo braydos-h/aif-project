@@ -491,7 +491,7 @@ class CacheTests(unittest.TestCase):
                 self.weight = weight
 
             def read(self):
-                return f'{{"response": "{self.weight} kg"}}'.encode("utf-8")
+                return f'{{"response": "{self.weight} kg"}}'.encode()
 
             def __enter__(self):
                 return self

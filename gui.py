@@ -372,6 +372,8 @@ class CowWeightApp:
         self.root.after(0, self._finish_demo_run)
 
     def _show_demo_result(self, result: dict, filename: str) -> None:
+        """UI-thread callback: show one demo-cow result (kg and, when
+        present, lbs) and log it to the session history."""
         weight_kg = result["estimated_weight_kg"]
         weight_lbs = result.get("estimated_weight_lbs")
         if weight_lbs is not None:
@@ -383,6 +385,8 @@ class CowWeightApp:
         self._add_history(weight_kg, result["source"], filename)
 
     def _finish_demo_run(self) -> None:
+        """UI-thread callback: stop the progress bar and re-enable buttons
+        after a demo-cow run finishes."""
         self.progress.stop()
         self.status_text.set("Demo run completed.")
         self.estimate_button.configure(state="normal")
@@ -399,6 +403,9 @@ class CowWeightApp:
         ollama_url: str,
         start_time: float,
     ) -> None:
+        """Background thread body for a single estimate: build a fresh
+        estimator from the snapshot settings and report back to the UI
+        thread via ``after``."""
         try:
             estimator = CowWeightEstimator(
                 backend=backend, model=model, ollama_url=ollama_url
@@ -411,6 +418,9 @@ class CowWeightApp:
         self.root.after(0, self._show_result, result, filename, elapsed)
 
     def _show_error(self, error: str) -> None:
+        """UI-thread callback: stop the progress bar, re-enable buttons
+        (including Retry if a request was made), and surface the error in a
+        message box."""
         self.progress.stop()
         self.status_text.set("Could not estimate weight.")
         self.estimate_button.configure(state="normal")
@@ -418,6 +428,8 @@ class CowWeightApp:
         messagebox.showerror(WINDOW_TITLE, error)
 
     def _format_result_text(self, result: dict, elapsed: float) -> str:
+        """Format the weight line: "Estimated weight: X kg / Y lbs (Zs)".
+        The lbs part is omitted when the result doesn't include it."""
         weight_kg = result["estimated_weight_kg"]
         weight_lbs = result.get("estimated_weight_lbs")
         if weight_lbs is not None:
@@ -427,6 +439,8 @@ class CowWeightApp:
         return f"{base} ({elapsed:.2f}s)"
 
     def _show_result(self, result: dict, filename: str, elapsed: float) -> None:
+        """UI-thread callback: display the estimate, any breed/confidence
+        extras, the model reply, and a history row."""
         self.progress.stop()
         source = result["source"]
         status = f"Estimate completed using {source} in {elapsed:.2f}s."
@@ -445,6 +459,9 @@ class CowWeightApp:
         self._add_history(result["estimated_weight_kg"], source, filename, elapsed)
 
     def retry(self) -> None:
+        """Re-run the last request: a normal estimate if the last request
+        was an image, the demo-cow run if it was a demo run. No-op when
+        nothing has run yet."""
         if not self.last_request:
             return
         if self.last_request[0] == "demo":
@@ -453,6 +470,7 @@ class CowWeightApp:
             self.estimate()
 
     def _set_reply(self, text: str) -> None:
+        """Replace the read-only model reply box with ``text``."""
         self.reply_text.configure(state="normal")
         self.reply_text.delete("1.0", "end")
         if text:
@@ -462,6 +480,8 @@ class CowWeightApp:
     def _add_history(
         self, weight_kg: float, source: str, filename: str, elapsed: float | None = None
     ) -> None:
+        """Append a row to the session history, trimming to
+        ``HISTORY_MAX_ROWS`` rows (oldest first)."""
         timestamp = time.strftime("%H:%M:%S")
         weight_text = f"{weight_kg:g}" + (f" ({elapsed:.2f}s)" if elapsed is not None else "")
         self.history.insert(
@@ -474,6 +494,8 @@ class CowWeightApp:
             self.history.delete(children[0])
 
     def copy_result(self) -> None:
+        """Copy the current weight line to the clipboard, stripping the
+        "Estimated weight: " prefix."""
         text = self.result_text.get()
         if not text:
             return
@@ -484,6 +506,7 @@ class CowWeightApp:
 
 
 def main() -> None:
+    """Entry point: configure logging, build the app, run the Tk loop."""
     setup_logging()
     root = tk.Tk()
     CowWeightApp(root)
