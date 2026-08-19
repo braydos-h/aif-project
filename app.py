@@ -61,8 +61,9 @@ class CowWeightEstimator:
         self,
         model: str | None = None,
         backend: str | None = None,
+        ollama_url: str | None = None,
     ) -> None:
-        self.ollama_url = os.environ.get("AIF_OLLAMA_URL", DEFAULT_OLLAMA_URL)
+        self.ollama_url = ollama_url or os.environ.get("AIF_OLLAMA_URL", DEFAULT_OLLAMA_URL)
         self.ollama_api_key = os.environ.get("OLLAMA_API_KEY")
         self.model = model or os.environ.get("AIF_AI_MODEL", DEFAULT_OLLAMA_MODEL)
         self.backend = backend or os.environ.get("AIF_AI_BACKEND", "ollama")

@@ -11,6 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from app import (
     DEFAULT_OLLAMA_MODEL,
+    DEFAULT_OLLAMA_URL,
     DEFAULT_PROMPT,
     CowWeightEstimator,
     setup_logging,
@@ -58,6 +59,7 @@ class CowWeightApp:
         self.result_text = tk.StringVar(value="")
         self.backend_var = tk.StringVar(value=CowWeightEstimator().backend)
         self.model_var = tk.StringVar(value=DEFAULT_OLLAMA_MODEL)
+        self.url_var = tk.StringVar(value=DEFAULT_OLLAMA_URL)
         self.preview_image: ImageTk.PhotoImage | None = None  # keep ref
 
         self._build_layout()
@@ -88,10 +90,11 @@ class CowWeightApp:
         )
         self.preview_label.configure(width=24)
 
-        # --- Backend / model selectors ---
+        # --- Backend / model / URL selectors ---
         selector_frame = ttk.Frame(frame)
         selector_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         selector_frame.columnconfigure(1, weight=1)
+        selector_frame.columnconfigure(4, weight=1)
 
         ttk.Label(selector_frame, text="Backend").grid(row=0, column=0, sticky="w", padx=(0, 8))
         self.backend_combo = ttk.Combobox(
@@ -106,6 +109,11 @@ class CowWeightApp:
         ttk.Label(selector_frame, text="Model").grid(row=0, column=2, sticky="w", padx=(16, 8))
         self.model_entry = ttk.Entry(selector_frame, textvariable=self.model_var, width=24)
         self.model_entry.grid(row=0, column=3, sticky="w")
+
+        url_label = ttk.Label(selector_frame, text="Ollama URL")
+        url_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        self.url_entry = ttk.Entry(selector_frame, textvariable=self.url_var)
+        self.url_entry.grid(row=1, column=1, columnspan=3, sticky="ew", pady=(8, 0))
 
         # --- Prompt ---
         ttk.Label(frame, text="Prompt (optional)").grid(row=5, column=0, sticky="w", pady=(14, 4))
@@ -208,6 +216,7 @@ class CowWeightApp:
         prompt = self.prompt.get("1.0", "end").strip() or DEFAULT_PROMPT
         backend = self.backend_var.get()
         model = self.model_var.get().strip() or DEFAULT_OLLAMA_MODEL
+        ollama_url = self.url_var.get().strip() or DEFAULT_OLLAMA_URL
         self.estimate_button.configure(state="disabled")
         self.copy_button.configure(state="disabled")
         self.status_text.set("Estimating weight…")
@@ -216,15 +225,17 @@ class CowWeightApp:
         self.progress.start(10)
         threading.Thread(
             target=self._estimate_in_background,
-            args=(filename, prompt, backend, model),
+            args=(filename, prompt, backend, model, ollama_url),
             daemon=True,
         ).start()
 
     def _estimate_in_background(
-        self, filename: str, prompt: str, backend: str, model: str
+        self, filename: str, prompt: str, backend: str, model: str, ollama_url: str
     ) -> None:
         try:
-            estimator = CowWeightEstimator(backend=backend, model=model)
+            estimator = CowWeightEstimator(
+                backend=backend, model=model, ollama_url=ollama_url
+            )
             result = estimator.estimate(image_file_to_data_uri(filename), prompt)
         except (OSError, ValueError) as exc:
             self.root.after(0, self._show_error, str(exc))

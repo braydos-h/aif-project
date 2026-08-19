@@ -1,5 +1,14 @@
 # Commits
 
+## 2026-08-19 12:27 (session: custom Ollama URL in GUI)
+- Added `ollama_url` constructor arg to `CowWeightEstimator` in `app.py`
+  (overrides `AIF_OLLAMA_URL` env / `DEFAULT_OLLAMA_URL` when passed).
+- Added an "Ollama URL" entry to the GUI selector frame (`gui.py`) so the
+  user can point the Ollama-compatible backend at any endpoint URL at
+  runtime (e.g. local Ollama, OpenAI-compatible gateway) without editing
+  `.env`. The URL is passed through to `CowWeightEstimator` per request.
+- All 14 tests pass; `ruff check .` is clean.
+
 ## 2026-08-19 12:25 (session: GUI polish + code quality)
 - Fixed the default Ollama Cloud model name from `gemma4:31b` (20GB local
   download, fails against the cloud endpoint) to `gemma4:31b-cloud` (the
