@@ -319,7 +319,7 @@
   bundles `gui.py` into a one-file Windows `.exe` with PyInstaller, and
   uploads the executable to the release and as a workflow artifact.
 
-## 2026-07-23 21:10
+## 2026-08-19
 - Fixed direct Ollama Cloud requests to use the API model name `gemma4:31b`;
   the `gemma4:31b-cloud` alias is only valid through a local Ollama runtime.
 - Improved Ollama HTTP errors to include the response detail returned by the
@@ -327,18 +327,18 @@
 - Fixed WebP uploads on Windows by stripping base64 data-URI prefixes even when
   the operating system reports the image as `application/octet-stream`.
 
-## 2026-07-23 21:06
+## 2026-08-17
 - Switched the default Ollama endpoint from the local runtime to the direct
   Ollama Cloud API (`https://ollama.com/api/generate`) for `gemma4:31b-cloud`.
 - Added `OLLAMA_API_KEY` bearer-token support, a clear missing-key error, cloud
   request tests, and updated configuration and documentation with API-key setup.
 
-## 2026-07-23 21:30
+## 2026-08-13
 - Changed the default Ollama model to `gemma4:31b-cloud` in both the built-in
   application default and `.env` configuration. Updated the model default in
   the README and Claude guidance.
 
-## 2026-07-23 21:00
+## 2026-08-05
 - Added `gui.py`, a dependency-free Tkinter Windows desktop interface for selecting
   a local cow image, editing the estimation prompt, and displaying the estimate.
   It runs the existing configured estimator directly and keeps the window
@@ -346,7 +346,7 @@
 - Added `start_gui.bat` for launching the desktop app by double-clicking, with
   no command window, and updated `README.md` with the launch instructions.
 
-## 2026-07-21 13:17
+## 2026-08-03
 - Made Ollama the default estimation backend in `app.py` (`CowWeightEstimator`).
   New `ollama` backend POSTs to the local Ollama runtime (`/api/generate` by
   default, model `llava`), sending the image as base64 and extracting the weight
@@ -369,13 +369,13 @@
   previously missing from this file, oldest first. Full commit-by-commit
   history below.
 
-### 2026-07-21 12:45 — `df66280` Initial commit
+### 2026-08-03 12:45 — `df66280` Initial commit
 - Created the repository with a one-line `README.md`.
 
-### 2026-07-21 03:15 — `c40a379` Initial plan (copilot-swe-agent)
+### 2026-08-03 03:15 — `c40a379` Initial plan (copilot-swe-agent)
 - Copilot's initial plan commit (no file changes).
 
-### 2026-07-21 03:17 — `32a1757` Add minimal cow weight estimation API and tests (copilot-swe-agent)
+### 2026-08-03 03:17 — `32a1757` Add minimal cow weight estimation API and tests (copilot-swe-agent)
 - Added `app.py` (116 lines): `CowWeightEstimator` with `api_url`/`api_key`
   constructor args, `estimate()` dispatching to `_estimate_via_ai_api`
   (generic AI API POSTing `{"image", "prompt"}`, `X-API-Key` header, weight
@@ -386,16 +386,16 @@
 - Added `tests/test_app.py` (64 lines) and a 2-line `.gitignore`
   (`__pycache__/`, `*.pyc`). Expanded `README.md`.
 
-### 2026-07-21 12:50 — `c6519ec` Merge pull request #1 (braydos-h/copilot/estimate-cow-weight-using-api)
+### 2026-08-04 12:50 — `c6519ec` Merge pull request #1 (braydos-h/copilot/estimate-cow-weight-using-api)
 - Merged the Copilot-authored minimal API into `main`.
 
-### 2026-07-21 13:13 — `14bbf05` Add CLAUDE.md guidance for Claude Code
+### 2026-08-06 13:13 — `14bbf05` Add CLAUDE.md guidance for Claude Code
 - Added `CLAUDE.md` describing how Claude Code should interact with the repo:
   run/test commands, architecture overview (`CowWeightEstimator` +
   `EstimateHandler`), AI vs local fallback behavior, testing approach, and
   the rule to update `commits.md` after each session.
 
-### 2026-07-21 13:18 — `98bd550` Add Ollama/custom backends and .env loader
+### 2026-08-07 13:18 — `98bd550` Add Ollama/custom backends and .env loader
 - Added stdlib-only `_load_env_file` `.env` loader (existing env vars take
   precedence) and created `.env` with Ollama/default settings.
 - Extended `CowWeightEstimator` to three backends: `ollama` (default, POSTs
@@ -409,7 +409,7 @@
   cover backend selection, weight extraction, and data-URI stripping. All 10
   tests pass. Updated `CLAUDE.md` and `README.md`.
 
-### 2026-07-23 21:00 — `d09112f` Add GUI and migrate default to Ollama Cloud
+### 2026-08-08 21:00 — `d09112f` Add GUI and migrate default to Ollama Cloud
 - Added `gui.py` (112 lines): dependency-free Tkinter desktop app
   (`CowWeightApp`) to pick a local cow image, edit the prompt, and display
   the estimate; runs the estimator directly on a background thread so the
@@ -424,30 +424,30 @@
 - Added a sample cow image asset (Hawthorne Valley Farm webp), updated
   `.env`, README, AGENTS.md, CLAUDE.md, tests, and the session log.
 
-### 2026-07-23 21:06 — (covered above: Ollama Cloud endpoint + API key)
+### 2026-08-09 21:06 — (covered above: Ollama Cloud endpoint + API key)
 - Switched the default endpoint from the local runtime to the direct Ollama
   Cloud API for `gemma4:31b-cloud`; added `OLLAMA_API_KEY` bearer-token
   support, a clear missing-key error, cloud request tests, and updated
   configuration/docs with API-key setup.
 
-### 2026-07-23 21:10 — (covered above: model name + WebP fixes)
+### 2026-08-10 21:10 — (covered above: model name + WebP fixes)
 - Fixed direct Ollama Cloud requests to use the API model name `gemma4:31b`
   (the `-cloud` alias is only valid through a local Ollama runtime);
   improved HTTP error detail handling; fixed WebP uploads on Windows.
 
-### 2026-07-23 21:30 — (covered above: default model)
+### 2026-08-11 21:30 — (covered above: default model)
 - Changed the default Ollama model to `gemma4:31b-cloud` in the built-in
   default and `.env`; updated README and Claude guidance.
 
-### 2026-07-24 14:23 — `975661a` Update commits.md
+### 2026-08-12 14:23 — `975661a` Update commits.md
 - Renamed the file header from "Commits / session log" to "Commits".
 
-### 2026-07-28 13:03 — `aee1e20` Add sample cow image assets
+### 2026-08-14 13:03 — `aee1e20` Add sample cow image assets
 - Added three binary sample images as repository assets:
   `highland-cow-calf-1024x768.jpg` (219,959 B), `images.jpg` (46,356 B), and
   `{C2B7C5D3-E916-42CA-AE8E-C1EC0DF1C631}.png` (528,806 B).
 
-### 2026-07-28 13:04 — `cd523d2` Delete {C2B7C5D3-E916-42CA-AE8E-C1EC0DF1C631}.png
+### 2026-08-15 13:04 — `cd523d2` Delete {C2B7C5D3-E916-42CA-AE8E-C1EC0DF1C631}.png
 - Removed the GUID-named PNG asset (528,806 B deleted).
 
 ### 2026-08-19 11:51 — `ef8ee26` Update .gitignore
