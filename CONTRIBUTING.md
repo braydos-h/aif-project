@@ -15,11 +15,11 @@ agent-specific notes live in [AGENTS.md](AGENTS.md) and
 - **No `pip install` needed to run.** Keep it that way.
 - **Docstrings on everything.** Every public class and method carries a
   docstring explaining what it does, its arguments/returns, and what it
-  raises. Follow the existing style (see `app.py`).
-- **Follow the layering.** Estimation logic lives in `app.py`'s
-  `CowWeightEstimator`; HTTP lives in `EstimateHandler`; UI lives in
-  `gui.py`. `gui.py` never talks HTTP, and neither layer re-implements the
-  other.
+  raises. Follow the existing style (see `aif/estimator.py`).
+- **Follow the layering.** Estimation logic lives in `aif/estimator.py`'s
+  `CowWeightEstimator`; HTTP lives in `EstimateHandler` (`aif/server.py`);
+  UI lives in `aif/gui.py`. `gui.py` never talks HTTP, and neither layer
+  re-implements the other.
 - **Error messages are structured.** HTTP errors carry a machine-readable
   `code` plus a human `error` message. New failure modes get a new code
   string, documented in the handler docstring and README.
@@ -31,23 +31,36 @@ agent-specific notes live in [AGENTS.md](AGENTS.md) and
 | Run the API server            | `python app.py` (listens on `127.0.0.1:8080`)  |
 | Run the desktop GUI           | `python gui.py`                                |
 | Run all tests                 | `python -m unittest discover -s tests -v`      |
-| Run one test                  | `python -m unittest tests.test_app.<TestClass>.<test_name> -v` |
+| Run one test                  | `python -m unittest tests.test_estimator.OllamaEstimatorTests.test_cloud_endpoint_uses_bearer_token -v` |
 | Lint                          | `ruff check .`                                 |
 | Auto-fix lint                 | `ruff check --fix .`                           |
+
+`app.py` and `gui.py` are thin wrappers over `aif.server` and `aif.gui`
+respectively, so the commands above work unchanged — but import the package
+(`from aif import ...`) in new code rather than the wrappers.
 
 Before finishing any change: all tests pass and `ruff check .` is clean.
 
 ## Repository layout
 
 ```
-app.py           HTTP API + CowWeightEstimator (the core logic)
-gui.py           Tkinter desktop app; reuses app.CowWeightEstimator
-tests/test_app.py  HTTP + unit + GUI smoke tests
-pyproject.toml   Metadata + ruff config + optional extras
-.env.example     Committed config template; copy to .env locally
-cows/            Demo images used by the GUI's "Test demo cows" button
+aif/
+├── __init__.py     Package exports (estimator, server, constants)
+├── config.py       Constants, defaults, .env loader, setup_logging
+├── estimator.py    CowWeightEstimator + image validation (the core logic)
+├── server.py       EstimateHandler + create_server (HTTP API)
+└── gui.py          Tkinter desktop app; reuses aif.estimator
+app.py              Thin wrapper: python app.py runs the HTTP API
+gui.py              Thin wrapper: python gui.py runs the desktop app
+tests/
+├── test_server.py    HTTP request/response suite (real sockets)
+├── test_estimator.py Estimator unit tests (parsing, cache, retry, auth)
+└── test_gui.py       GUI smoke tests
+pyproject.toml      Metadata + ruff config + optional extras
+.env.example        Committed config template; copy to .env locally
+cows/               Demo images used by the GUI's "Test demo cows" button
 .github/workflows/build-windows.yml  Release: tests + PyInstaller .exe
-commits.md       Changelog of sessions; append a dated entry after every session
+commits.md          Changelog of sessions; append a dated entry after every session
 ```
 
 ## How the pieces fit
@@ -63,27 +76,27 @@ commits.md       Changelog of sessions; append a dated entry after every session
   from there — never import or instantiate estimators inside the handler.
 - The GUI builds a **fresh** `CowWeightEstimator` per request from the
   UI's backend/model/URL fields, so you don't need to restart it to switch.
-- Both `app.py` and `gui.py` read `.env` at import time. If you add a new
-  env var, add it to `.env.example` (never `.env` — it's gitignored and
-  may contain a real key) and the config table in `README.md`.
+- The `aif` package reads `.env` at import time. If you add a new env var,
+  add it to `.env.example` (never `.env` — it's gitignored and may contain
+  a real key) and the config table in `README.md`.
 
 ## Common changes
 
 ### Add a new estimation backend
 
 1. Write a private method `_estimate_via_<name>(image_reference, prompt)`
-   on `CowWeightEstimator` returning the same dict shape (see above) and
-   raising `ValueError` on failure.
+   on `CowWeightEstimator` in `aif/estimator.py`, returning the same dict
+   shape (see above) and raising `ValueError` on failure.
 2. Accept the backend name in `__init__` (constructor arg and/or a new
    `AIF_*` env var) and dispatch to it in `estimate()`.
-3. Add the option to the GUI combobox (`BACKEND_CHOICES` in `gui.py`) and
-   handle its config fields.
+3. Add the option to the GUI combobox (`BACKEND_CHOICES` in `aif/gui.py`)
+   and handle its config fields.
 4. Document in README (config table), `.env.example`, `AGENTS.md`/`CLAUDE.md`
-   "Backend selection" section, and add tests in `tests/test_app.py`.
+   "Backend selection" section, and add tests in `tests/test_estimator.py`.
 
 ### Add a new HTTP endpoint
 
-1. Add a `do_<METHOD>` method on `EstimateHandler`.
+1. Add a `do_<METHOD>` method on `EstimateHandler` in `aif/server.py`.
 2. Set `self.request_id = self._new_request_id()` first; respond with
    `self._send_json(...)` for success or `self._error(code, message, status)`
    for failure (new `code` string, documented in the handler docstring).
@@ -92,7 +105,8 @@ commits.md       Changelog of sessions; append a dated entry after every session
 
 ### Change how weights are parsed from model output
 
-- Structured-JSON-first parsing lives in `CowWeightEstimator._parse_structured_response`
+- Structured-JSON-first parsing lives in
+  `CowWeightEstimator._parse_structured_response`
   (returns `(weight_kg, extras_dict)`).
 - Free-text fallback lives in `_extract_weight_from_text` (prefers `<n> kg`,
   then the first bare number).
@@ -110,13 +124,15 @@ commits.md       Changelog of sessions; append a dated entry after every session
 
 ## Testing notes
 
-- HTTP tests use `create_server(port=0, estimator=...)` on a background
+- HTTP tests boot `create_server(port=0, estimator=...)` on a background
   thread, then hit it over real sockets — keep new endpoint tests in that
   style so status codes and serialization are exercised.
 - Unit tests that touch Ollama mock `urllib.request.urlopen`; the live
   network path is never exercised in CI.
 - The `none` backend is deterministic (SHA-256 of the image reference), so
   HTTP tests use it to get stable weights.
+- When mocking module-level names, patch `aif.server.logger` /
+  `aif.estimator.logger` (not the root `aif` logger).
 
 ## Before you commit
 
