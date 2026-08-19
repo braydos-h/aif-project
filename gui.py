@@ -1,4 +1,27 @@
-"""Windows desktop interface for estimating a cow's weight from an image."""
+"""Windows desktop interface for estimating a cow's weight from an image.
+
+A Tkinter app (``CowWeightApp``) that wraps ``app.CowWeightEstimator``
+directly — it does **not** start the HTTP server. The user picks an image
+file, edits the prompt, switches backend/model/URL at runtime, and views
+the weight, the model's full reply, and a session history.
+
+Threading model
+---------------
+All work that can block (network calls, image encoding) runs on daemon
+background threads. UI updates are marshalled back to the Tk event loop
+via ``root.after(0, ...)`` — never touch widgets from a background thread.
+
+Extending the UI
+----------------
+- Widgets are built in ``_build_layout`` using a grid on a single padded
+  frame; new rows extend the row numbers (the history treeview is the
+  row with weight 1). Button commands are methods of ``CowWeightApp``.
+- Follow the "…_in_background" + "…_result" pattern for anything that can
+  block: disable buttons, start the progress bar, spawn a daemon thread,
+  and update widgets from the thread via ``root.after``.
+- Keep Tk and backend logic separate: reuse ``CowWeightEstimator`` from
+  ``app.py`` instead of inlining estimation code here.
+"""
 
 import base64
 import logging
@@ -53,6 +76,18 @@ def _short_name(path: str, width: int = 32) -> str:
 
 
 class CowWeightApp:
+    """Tkinter desktop app for estimating cow weight from a local image.
+
+    Args:
+        root: The Tk root window this app builds its widgets in.
+
+    Note:
+        Everything on the class is a widget-building or UI-update concern;
+        estimation itself is delegated to ``CowWeightEstimator`` (imported
+        from ``app.py``). A fresh estimator is built per request from the
+        UI-selected backend/model/URL.
+    """
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(WINDOW_TITLE)

@@ -606,6 +606,9 @@ class EstimateHandler(BaseHTTPRequestHandler):
         )
 
     def _send_json(self, payload: dict[str, Any], status: HTTPStatus) -> None:
+        """Serialize ``payload`` as JSON and write the response with CORS
+        headers and an ``x-request-id`` header. Injects the request id into
+        the body when the payload doesn't already carry one."""
         if "request_id" not in payload:
             payload = {**payload, "request_id": getattr(self, "request_id", "-")}
         encoded = json.dumps(payload).encode("utf-8")
@@ -623,6 +626,21 @@ def create_server(
     port: int = 8080,
     estimator: CowWeightEstimator | None = None,
 ) -> HTTPServer:
+    """Create an HTTP server serving the estimation API.
+
+    Args:
+        host: Interface to bind. Defaults to loopback only.
+        port: Port to listen on. Use ``0`` for an ephemeral port (the test
+            suite relies on this).
+        estimator: Estimator instance to use. When ``None``, a default
+            ``CowWeightEstimator`` is built from env vars / ``.env`` at
+            call time; changes to the environment after that have no effect.
+
+    Returns:
+        An ``HTTPServer`` with the estimator attached as
+        ``server.estimator`` (read by ``EstimateHandler``). Call
+        ``serve_forever()`` to start it.
+    """
     server = HTTPServer((host, port), EstimateHandler)
     server.estimator = estimator or CowWeightEstimator()  # type: ignore[attr-defined]
     return server
