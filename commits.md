@@ -6,14 +6,20 @@
     `python3`; clear error message if none found.
   - cargo lookup falls back to `%USERPROFILE%\.cargo\bin\cargo.exe` (the
     default rustup install location) when cargo is not on PATH.
+  - If the cargo build itself fails (e.g. missing MSVC linker) but a release
+    binary already exists, warns and reuses it instead of aborting.
   - `SKIP_RUST=1` env var skips the Rust build step entirely (warns if the
     backend binary is then missing).
   - Verifies the spec file exists and that `dist\CowWeightEstimator.exe` was
     actually produced after PyInstaller runs.
+  - Warns (with a continue prompt) if `CowWeightEstimator.exe` is currently
+    running, since it locks the dist output and makes PyInstaller fail.
   - If `pip install pyinstaller` fails, retries after `python -m ensurepip
     --upgrade` before giving up.
   - `build_exe.bat clean` passes `--clean` to PyInstaller to clear its cache.
-  - Prints the final exe size.
+  - Prints the final exe size. Verified end-to-end: cargo failed (no MSVC
+    linker on this machine), reused the existing backend binary, and produced
+    a fresh `dist\CowWeightEstimator.exe` (32.2 MB).
 
 ## 2026-08-19 13:34 (session: one-file Windows exe build)
 - **`CowWeightEstimator.spec` (new)**: PyInstaller spec for a one-file,
