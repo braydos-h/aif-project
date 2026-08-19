@@ -1,5 +1,11 @@
 # Commits
 
+## 2026-08-19 (session: PowerShell launcher)
+- Added `start_gui.ps1`, a PowerShell equivalent of `start_gui.bat`: changes
+  to the script directory, verifies `gui.py` exists next to the script,
+  launches it with `pythonw.exe` if found on PATH (falling back to
+  `python.exe`), and prints a paused error message if Python is missing.
+
 ## 2026-08-19 13:10 (session: harden start_gui.bat)
 - **`start_gui.bat` now robust:** `cd`s to the script directory so `.env`
   resolution and relative paths work regardless of where it's double-clicked
