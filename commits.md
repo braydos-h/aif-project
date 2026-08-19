@@ -1,5 +1,15 @@
 # Commits
 
+## 2026-08-19 (session: README rewrite)
+- Rewrote `README.md` end-to-end: added a Highlights section, Requirements,
+  Quick start (GUI + API), full API reference with request/response tables
+  and status codes, a Configuration section with a settings table and Ollama
+  Cloud setup steps, offline-mode notes, corrected the test command (dropped
+  the stale Linux CI `cd /home/runner/...` path), Project structure, an
+  Architecture summary, the Releases/PyInstaller workflow, and a Notes section
+  covering import-time estimator construction, WebP handling, and weight
+  extraction. No code changes.
+
 ## 2026-08-19 14:30
 - Applied ponytail-audit cuts to `app.py`: removed the unused `custom` backend
   (`_estimate_via_custom_api`, `BACKEND_CUSTOM`, the `api_url`/`api_key`
