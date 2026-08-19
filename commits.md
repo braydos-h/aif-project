@@ -1,5 +1,12 @@
 # Commits
 
+## 2026-08-19 (session: installer)
+- Added `install.ps1`, a bootstrap installer that: installs Python 3.12 via
+  winget when missing (installing winget itself if absent), installs Rust via
+  winget when missing, builds the Rust backend in release mode, and creates a
+  "Cow Weight Estimator" desktop shortcut pointing at `start_gui.ps1`. Pauses
+  with a readable error message on any failure.
+
 ## 2026-08-19 (session: PowerShell launcher)
 - Added `start_gui.ps1`, a PowerShell equivalent of `start_gui.bat`: changes
   to the script directory, verifies `gui.py` exists next to the script,
