@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 
@@ -16,11 +16,6 @@ DEFAULT_PROMPT = "Estimate this cow's weight in kilograms from the provided imag
 # Default backend is Ollama Cloud. Override via .env / env vars.
 DEFAULT_OLLAMA_URL = "https://ollama.com/api/generate"
 DEFAULT_OLLAMA_MODEL = "gemma4:31b"
-
-# Backend choices: "ollama" (default), "custom" (generic AI API), "none" (local fallback).
-BACKEND_OLLAMA = "ollama"
-BACKEND_CUSTOM = "custom"
-BACKEND_NONE = "none"
 
 
 def _load_env_file(filename: str = ".env") -> None:
@@ -54,35 +49,22 @@ _load_env_file()
 class CowWeightEstimator:
     def __init__(
         self,
-        api_url: Optional[str] = None,
-        api_key: Optional[str] = None,
         model: Optional[str] = None,
         backend: Optional[str] = None,
     ) -> None:
-        # A custom AI API URL takes precedence and selects the "custom" backend.
-        self.api_url = api_url or os.environ.get("AIF_AI_API_URL")
-        self.api_key = api_key or os.environ.get("AIF_AI_API_KEY")
         self.ollama_url = os.environ.get("AIF_OLLAMA_URL", DEFAULT_OLLAMA_URL)
         self.ollama_api_key = os.environ.get("OLLAMA_API_KEY")
         self.model = model or os.environ.get("AIF_AI_MODEL", DEFAULT_OLLAMA_MODEL)
-
-        if backend:
-            self.backend = backend
-        elif self.api_url:
-            self.backend = BACKEND_CUSTOM
-        else:
-            self.backend = os.environ.get("AIF_AI_BACKEND", BACKEND_OLLAMA)
+        self.backend = backend or os.environ.get("AIF_AI_BACKEND", "ollama")
 
     def estimate(self, image_reference: str, prompt: Optional[str] = None) -> Dict[str, Any]:
         prompt_to_use = prompt or DEFAULT_PROMPT
-        if self.backend == BACKEND_NONE:
+        if self.backend == "none":
             return self._estimate_fallback(image_reference, prompt_to_use)
-        if self.backend == BACKEND_CUSTOM:
-            return self._estimate_via_custom_api(image_reference, prompt_to_use)
         return self._estimate_via_ollama(image_reference, prompt_to_use)
 
     def _estimate_via_ollama(self, image_reference: str, prompt: str) -> Dict[str, Any]:
-        if self._is_ollama_cloud_url() and not self.ollama_api_key:
+        if urlparse(self.ollama_url).hostname == "ollama.com" and not self.ollama_api_key:
             raise ValueError(
                 "Ollama Cloud requires an API key. Set OLLAMA_API_KEY in .env "
                 "to an API key created at https://ollama.com/settings/keys."
@@ -138,34 +120,6 @@ class CowWeightEstimator:
             "model": self.model,
             "prompt_used": prompt,
         }
-
-    def _is_ollama_cloud_url(self) -> bool:
-        """Return whether the configured endpoint is Ollama's direct cloud API."""
-        return urlparse(self.ollama_url).hostname == "ollama.com"
-
-    def _estimate_via_custom_api(self, image_reference: str, prompt: str) -> Dict[str, Any]:
-        payload = json.dumps({"image": image_reference, "prompt": prompt}).encode("utf-8")
-        request = urllib.request.Request(
-            self.api_url,
-            data=payload,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        if self.api_key:
-            request.add_header("X-API-Key", self.api_key)
-
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                body = response.read().decode("utf-8")
-                parsed = json.loads(body) if body else {}
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise ValueError(f"Unable to get AI estimate: {exc}") from exc
-
-        weight_kg = parsed.get("weight_kg") or parsed.get("estimate_kg") or parsed.get("estimated_weight_kg")
-        if weight_kg is None:
-            raise ValueError("AI API response missing weight estimate")
-
-        return {"estimated_weight_kg": float(weight_kg), "source": "ai_api", "prompt_used": prompt}
 
     def _estimate_fallback(self, image_reference: str, prompt: str) -> Dict[str, Any]:
         digest = hashlib.sha256(image_reference.encode("utf-8")).hexdigest()

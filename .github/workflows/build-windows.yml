@@ -1,0 +1,45 @@
+name: Build Windows Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build Windows executable
+        run: |
+          pyinstaller --noconfirm --onefile --windowed `
+            --name "CowWeightEstimator" `
+            --add-data "app.py;." `
+            gui.py
+
+      - name: Upload executable to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CowWeightEstimator.exe
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CowWeightEstimator-windows
+          path: dist/CowWeightEstimator.exe

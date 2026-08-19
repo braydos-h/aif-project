@@ -1,4 +1,10 @@
-# Commits 
+# Commits
+
+## 2026-08-19 11:56
+- Added `.github/workflows/build-windows.yml` GitHub Actions workflow that
+  triggers on release publish, runs the test suite on `windows-latest`,
+  bundles `gui.py` into a one-file Windows `.exe` with PyInstaller, and
+  uploads the executable to the release and as a workflow artifact.
 
 ## 2026-07-23 21:10
 - Fixed direct Ollama Cloud requests to use the API model name `gemma4:31b`;

@@ -36,7 +36,6 @@ the image and prompt to Ollama and extracts the weight from the model's reply.
 Backends (set `AIF_AI_BACKEND` in `.env`):
 
 - `ollama` (default) — Ollama Cloud (`AIF_OLLAMA_URL`, `OLLAMA_API_KEY`, model `AIF_AI_MODEL`)
-- `custom` — generic AI API, used when `AIF_AI_API_URL` is set
 - `none` — deterministic local fallback estimate (no network calls)
 
 Create an API key in [Ollama settings](https://ollama.com/settings/keys), then

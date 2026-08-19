@@ -66,12 +66,8 @@ class EstimateApiTests(unittest.TestCase):
 
 class OllamaEstimatorTests(unittest.TestCase):
     def test_default_backend_is_ollama(self):
-        estimator = CowWeightEstimator(backend=None, api_url=None)
+        estimator = CowWeightEstimator(backend=None)
         self.assertEqual(estimator.backend, "ollama")
-
-    def test_custom_api_url_selects_custom_backend(self):
-        estimator = CowWeightEstimator(api_url="https://example.com/ai")
-        self.assertEqual(estimator.backend, "custom")
 
     def test_none_backend_uses_local_fallback(self):
         estimator = CowWeightEstimator(backend="none")
