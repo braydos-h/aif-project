@@ -1,5 +1,34 @@
 # Commits
 
+## 2026-08-19 13:34 (session: one-file Windows exe build)
+- **`CowWeightEstimator.spec` (new)**: PyInstaller spec for a one-file,
+  windowed `CowWeightEstimator.exe`. Bundles the `aif` package, the demo cow
+  images (`cows/`), and the Rust backend binary
+  (`backend/target/release/aif-backend.exe` as `backend/`). Hidden imports
+  for `PIL.Image`/`PIL.ImageTk`; `unittest`/`pytest` excluded. Un-ignored in
+  `.gitignore` (previously all `*.spec` were ignored).
+- **`build_exe.bat` (new)**: double-clickable local build — builds the Rust
+  release binary when cargo is available (warns and reuses an existing
+  binary otherwise), installs PyInstaller if missing, then runs
+  `pyinstaller --noconfirm CowWeightEstimator.spec` and prints the output
+  path. Built `dist\CowWeightEstimator.exe` (30.7 MB) and verified it starts
+  (window stayed open 10 s).
+- **PyInstaller-frozen path fixes** so the exe works moved anywhere:
+  - `aif/config.py` — new `repo_root()`: returns `sys._MEIPASS` when frozen
+    (onefile bundles extract there), otherwise the repo root; new
+    `_env_candidates()`: `.env` is now probed next to the running exe first
+    (so a packaged app can be configured without rebuilding), then the repo
+    root / bundle.
+  - `aif/gui.py` — `DEMO_COW_DIR` now uses `repo_root()`, so the "Test demo
+    cows" button works from the exe.
+  - `aif/__init__.py` — exports `repo_root`.
+- **`.github/workflows/build-windows.yml`**: PyInstaller step now uses the
+  spec file instead of inline flags (demo cows are now bundled in CI too).
+- **`tests/test_config.py` (new)**: 5 tests for `repo_root()` (normal,
+  frozen via mocked `sys.frozen`/`sys._MEIPASS`) and `_env_candidates()`
+  (exe-dir priority, env loaded from first existing candidate). Full suite:
+  52 tests passing, `ruff check .` clean.
+
 ## 2026-08-19 13:14 (session: Rust backend replaces the Python HTTP server)
 - **New Rust crate `backend/` (`aif-backend`) replaces `aif/server.py`.** The
   Python `http.server` was single-threaded — one slow Ollama call blocked
