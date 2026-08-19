@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import urllib.error
@@ -15,7 +16,17 @@ DEFAULT_PROMPT = "Estimate this cow's weight in kilograms from the provided imag
 
 # Default backend is Ollama Cloud. Override via .env / env vars.
 DEFAULT_OLLAMA_URL = "https://ollama.com/api/generate"
-DEFAULT_OLLAMA_MODEL = "gemma4:31b"
+DEFAULT_OLLAMA_MODEL = "gemma4:31b-cloud"
+
+logger = logging.getLogger("aif")
+
+
+def setup_logging(level: str = "INFO") -> None:
+    """Configure the root logger for both the server and the GUI."""
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
 
 def _load_env_file(filename: str = ".env") -> None:
@@ -119,6 +130,7 @@ class CowWeightEstimator:
             "source": "ollama",
             "model": self.model,
             "prompt_used": prompt,
+            "model_response": text,
         }
 
     def _estimate_fallback(self, image_reference: str, prompt: str) -> Dict[str, Any]:
@@ -129,6 +141,7 @@ class CowWeightEstimator:
             "estimated_weight_kg": estimated_weight_kg,
             "source": "local_fallback",
             "prompt_used": prompt,
+            "model_response": "",
         }
 
     @staticmethod
@@ -163,44 +176,52 @@ class CowWeightEstimator:
 
 
 class EstimateHandler(BaseHTTPRequestHandler):
-    estimator = CowWeightEstimator()
-
     def do_POST(self) -> None:
         if self.path != "/estimate-weight":
-            self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+            self._error("not_found", "Not found", HTTPStatus.NOT_FOUND)
             return
 
         length_header = self.headers.get("Content-Length")
         if not length_header:
-            self._send_json({"error": "Missing request body"}, status=HTTPStatus.BAD_REQUEST)
+            self._error("missing_body", "Missing request body", HTTPStatus.BAD_REQUEST)
             return
 
         try:
             body = self.rfile.read(int(length_header))
             payload = json.loads(body.decode("utf-8"))
         except (ValueError, json.JSONDecodeError):
-            self._send_json({"error": "Invalid JSON payload"}, status=HTTPStatus.BAD_REQUEST)
+            self._error("invalid_json", "Invalid JSON payload", HTTPStatus.BAD_REQUEST)
             return
 
         image_reference = payload.get("image_url") or payload.get("image_base64")
         prompt = payload.get("prompt")
         if not image_reference:
-            self._send_json(
-                {"error": "Provide image_url or image_base64 in request payload"},
-                status=HTTPStatus.BAD_REQUEST,
+            self._error(
+                "missing_image",
+                "Provide image_url or image_base64 in request payload",
+                HTTPStatus.BAD_REQUEST,
             )
             return
 
+        estimator = self.server.estimator  # type: ignore[attr-defined]
         try:
-            result = self.estimator.estimate(image_reference=image_reference, prompt=prompt)
+            result = estimator.estimate(image_reference=image_reference, prompt=prompt)
         except ValueError as exc:
-            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_GATEWAY)
+            logger.exception("estimation failed")
+            self._error("estimation_failed", str(exc), HTTPStatus.BAD_GATEWAY)
             return
 
         self._send_json(result, status=HTTPStatus.OK)
 
     def log_message(self, format: str, *args: Any) -> None:
-        return
+        logger.info("%s - %s", self.address_string(), format % args)
+
+    def _error(self, code: str, message: str, status: HTTPStatus) -> None:
+        if status.value >= 500:
+            logger.error("%s: %s", code, message)
+        else:
+            logger.warning("%s: %s", code, message)
+        self._send_json({"error": message, "code": code}, status=status)
 
     def _send_json(self, payload: Dict[str, Any], status: HTTPStatus) -> None:
         encoded = json.dumps(payload).encode("utf-8")
@@ -211,11 +232,18 @@ class EstimateHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
 
-def create_server(host: str = "127.0.0.1", port: int = 8080) -> HTTPServer:
-    return HTTPServer((host, port), EstimateHandler)
+def create_server(
+    host: str = "127.0.0.1",
+    port: int = 8080,
+    estimator: Optional[CowWeightEstimator] = None,
+) -> HTTPServer:
+    server = HTTPServer((host, port), EstimateHandler)
+    server.estimator = estimator or CowWeightEstimator()  # type: ignore[attr-defined]
+    return server
 
 
 if __name__ == "__main__":
+    setup_logging()
     server = create_server()
     print("Cow weight estimation API listening on http://127.0.0.1:8080")
     server.serve_forever()

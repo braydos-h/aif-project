@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from unittest import mock
 
-from app import CowWeightEstimator, DEFAULT_PROMPT, EstimateHandler, create_server
+from app import CowWeightEstimator, DEFAULT_PROMPT, create_server
 
 
 class EstimateApiTests(unittest.TestCase):
@@ -13,8 +13,7 @@ class EstimateApiTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         # Ollama is the default backend, but the HTTP-level tests exercise the
         # deterministic local fallback so they don't depend on a running LLM.
-        EstimateHandler.estimator = CowWeightEstimator(backend="none")
-        cls.server = create_server(port=0)
+        cls.server = create_server(port=0, estimator=CowWeightEstimator(backend="none"))
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
         cls.base_url = f"http://127.0.0.1:{cls.server.server_port}"
@@ -62,6 +61,33 @@ class EstimateApiTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 400)
         error = json.loads(context.exception.read().decode("utf-8"))
         self.assertIn("error", error)
+        self.assertEqual(error["code"], "missing_image")
+
+    def test_estimation_failure_returns_bad_gateway(self):
+        # Force the ollama backend with no API key -> ValueError -> 502.
+        bad_server = create_server(
+            port=0, estimator=CowWeightEstimator(backend="ollama")
+        )
+        thread = threading.Thread(target=bad_server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{bad_server.server_port}"
+        try:
+            data = json.dumps({"image_base64": "QUJD"}).encode("utf-8")
+            request = urllib.request.Request(
+                f"{base_url}/estimate-weight",
+                data=data,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as context:
+                urllib.request.urlopen(request, timeout=10)
+            self.assertEqual(context.exception.code, 502)
+            error = json.loads(context.exception.read().decode("utf-8"))
+            self.assertEqual(error["code"], "estimation_failed")
+        finally:
+            bad_server.shutdown()
+            bad_server.server_close()
+            thread.join(timeout=5)
 
 
 class OllamaEstimatorTests(unittest.TestCase):
