@@ -199,12 +199,34 @@ class CowWeightEstimator:
         self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     def estimate(self, image_reference: str, prompt: str | None = None) -> dict[str, Any]:
+        """Estimate the weight of a cow from an image.
+
+        Args:
+            image_reference: An ``https://``/``http://`` URL, a
+                ``data:<mime>;base64,...`` URI, or raw base64 image bytes.
+            prompt: Optional prompt override; falls back to ``DEFAULT_PROMPT``.
+
+        Returns:
+            A dict with at least ``estimated_weight_kg``,
+            ``estimated_weight_lbs``, ``source`` and ``prompt_used``; the
+            ``ollama`` backend also includes ``model`` and ``model_response``
+            plus optional structured extras (``confidence``, ``breed``,
+            ``body_condition_score``).
+
+        Raises:
+            ImageValidationError: If the image bytes are not a supported
+                format (JPEG, PNG, GIF, BMP, WebP) or not valid base64.
+            ValueError: If the backend fails (network error, missing API
+                key, unparseable reply).
+        """
         prompt_to_use = prompt or DEFAULT_PROMPT
         if self.backend == "none":
             return self._estimate_fallback(image_reference, prompt_to_use)
         return self._estimate_via_ollama(image_reference, prompt_to_use)
 
     def _cache_get(self, key: str) -> dict[str, Any] | None:
+        """Return a shallow copy of the cached result for ``key`` if it is
+        still within its TTL, else None. Expired entries are removed."""
         if self.cache_ttl <= 0:
             return None
         entry = self._cache.get(key)
@@ -217,11 +239,24 @@ class CowWeightEstimator:
         return dict(result)  # shallow copy so callers can't mutate the cache
 
     def _cache_put(self, key: str, result: dict[str, Any]) -> None:
+        """Store ``result`` under ``key`` with the configured TTL. No-op when
+        ``cache_ttl <= 0``."""
         if self.cache_ttl <= 0:
             return
         self._cache[key] = (time.monotonic() + self.cache_ttl, result)
 
     def _estimate_via_ollama(self, image_reference: str, prompt: str) -> dict[str, Any]:
+        """Estimate by sending the image to Ollama Cloud and parsing its reply.
+
+        Sends ``{"model", "prompt", "images": [base64], "stream": false}`` to
+        ``self.ollama_url``. The API key is required when the URL host is
+        ``ollama.com`` and is sent as a ``Bearer`` token. Results are cached
+        per image hash (see ``cache_ttl``).
+
+        Raises:
+            ValueError: Missing API key, network failure, HTTP error, empty
+                reply, or a reply with no extractable weight.
+        """
         if urlparse(self.ollama_url).hostname == "ollama.com" and not self.ollama_api_key:
             raise ValueError(
                 "Ollama Cloud requires an API key. Set OLLAMA_API_KEY in .env "
@@ -371,6 +406,10 @@ class CowWeightEstimator:
         return CowWeightEstimator._extract_weight_from_text(text), {}
 
     def _estimate_fallback(self, image_reference: str, prompt: str) -> dict[str, Any]:
+        """Deterministic local estimate: hash the image reference to a stable
+        weight in the range 250–900 kg. Never touches the network, so tests
+        and air-gapped use can rely on it. Reports
+        ``source == "local_fallback"``."""
         digest = hashlib.sha256(image_reference.encode("utf-8")).hexdigest()
         normalized = int(digest[:8], 16) / 0xFFFFFFFF
         estimated_weight_kg = round(250 + (normalized * 650), 1)
