@@ -2,8 +2,9 @@
 
 ``CowWeightEstimator`` dispatches ``estimate()`` to the configured backend
 (see "How to add a new backend" below). It is decoupled from HTTP and the
-GUI — both the server (``aif.server``) and the desktop app (``aif.gui``)
-share this module.
+GUI — the desktop app (``aif.gui``) uses this module in-process; the HTTP
+API is served by the Rust backend (``backend/``, crate ``aif-backend``),
+which mirrors this logic and must stay behaviorally identical.
 """
 
 import base64
@@ -60,11 +61,11 @@ def _validate_image_bytes(image_bytes: bytes) -> None:
 class CowWeightEstimator:
     """Estimate a cow's weight from an image reference.
 
-    Decoupled from HTTP: the same class is used by the ``EstimateHandler``
-    and by the desktop GUI. Configuration comes from constructor arguments
-    that fall back to environment variables / the ``.env`` file, which are
-    read once at import time — changing env vars after construction has no
-    effect on a running server.
+    Decoupled from HTTP: the GUI uses this class in-process (the HTTP API
+    lives in the Rust backend, ``backend/``). Configuration comes from
+    constructor arguments that fall back to environment variables / the
+    ``.env`` file, which are read once at import time — changing env vars
+    after construction has no effect on a running server.
 
     Args:
         model: Model name sent to the backend. Defaults to ``AIF_AI_MODEL``
