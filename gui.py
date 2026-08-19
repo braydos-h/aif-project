@@ -271,6 +271,7 @@ class CowWeightApp:
         backend = self.backend_var.get()
         model = self.model_var.get().strip() or DEFAULT_OLLAMA_MODEL
         ollama_url = self.url_var.get().strip() or DEFAULT_OLLAMA_URL
+        self.last_request = ("demo", prompt, backend, model, ollama_url)
         self.estimate_button.configure(state="disabled")
         self.demo_button.configure(state="disabled")
         self.copy_button.configure(state="disabled")
@@ -353,6 +354,7 @@ class CowWeightApp:
         self.progress.stop()
         self.status_text.set("Could not estimate weight.")
         self.estimate_button.configure(state="normal")
+        self.retry_button.configure(state="normal" if self.last_request else "disabled")
         messagebox.showerror(WINDOW_TITLE, error)
 
     def _show_result(
@@ -368,8 +370,17 @@ class CowWeightApp:
         self.result_text.set(f"Estimated weight: {weight_kg:g} kg ({elapsed:.2f}s)")
         self.estimate_button.configure(state="normal")
         self.copy_button.configure(state="normal")
+        self.retry_button.configure(state="normal")
         self._set_reply(reply)
         self._add_history(weight_kg, source, filename, elapsed)
+
+    def retry(self) -> None:
+        if not self.last_request:
+            return
+        if self.last_request[0] == "demo":
+            self.estimate_demo_cows()
+        else:
+            self.estimate()
 
     def _set_reply(self, text: str) -> None:
         self.reply_text.configure(state="normal")
