@@ -340,15 +340,7 @@ class CowWeightApp:
             self.root.after(0, self._show_error, str(exc))
             return
         elapsed = time.monotonic() - start_time
-        self.root.after(
-            0,
-            self._show_result,
-            result["estimated_weight_kg"],
-            result["source"],
-            result.get("model_response", ""),
-            filename,
-            elapsed,
-        )
+        self.root.after(0, self._show_result, result, filename, elapsed)
 
     def _show_error(self, error: str) -> None:
         self.progress.stop()
@@ -357,22 +349,32 @@ class CowWeightApp:
         self.retry_button.configure(state="normal" if self.last_request else "disabled")
         messagebox.showerror(WINDOW_TITLE, error)
 
-    def _show_result(
-        self,
-        weight_kg: float,
-        source: str,
-        reply: str,
-        filename: str,
-        elapsed: float,
-    ) -> None:
+    def _format_result_text(self, result: dict, elapsed: float) -> str:
+        weight_kg = result["estimated_weight_kg"]
+        weight_lbs = result.get("estimated_weight_lbs")
+        if weight_lbs is not None:
+            base = f"Estimated weight: {weight_kg:g} kg / {weight_lbs:g} lbs"
+        else:
+            base = f"Estimated weight: {weight_kg:g} kg"
+        return f"{base} ({elapsed:.2f}s)"
+
+    def _show_result(self, result: dict, filename: str, elapsed: float) -> None:
         self.progress.stop()
-        self.status_text.set(f"Estimate completed using {source} in {elapsed:.2f}s.")
-        self.result_text.set(f"Estimated weight: {weight_kg:g} kg ({elapsed:.2f}s)")
+        source = result["source"]
+        status = f"Estimate completed using {source} in {elapsed:.2f}s."
+        breed = result.get("breed")
+        confidence = result.get("confidence")
+        if breed:
+            status += f" Breed: {breed}."
+        if confidence is not None:
+            status += f" Confidence: {confidence:.0%}."
+        self.status_text.set(status)
+        self.result_text.set(self._format_result_text(result, elapsed))
         self.estimate_button.configure(state="normal")
         self.copy_button.configure(state="normal")
         self.retry_button.configure(state="normal")
-        self._set_reply(reply)
-        self._add_history(weight_kg, source, filename, elapsed)
+        self._set_reply(result.get("model_response", ""))
+        self._add_history(result["estimated_weight_kg"], source, filename, elapsed)
 
     def retry(self) -> None:
         if not self.last_request:
