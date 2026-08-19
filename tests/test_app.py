@@ -65,29 +65,32 @@ class EstimateApiTests(unittest.TestCase):
 
     def test_estimation_failure_returns_bad_gateway(self):
         # Force the ollama backend with no API key -> ValueError -> 502.
-        bad_server = create_server(
-            port=0, estimator=CowWeightEstimator(backend="ollama")
-        )
-        thread = threading.Thread(target=bad_server.serve_forever, daemon=True)
-        thread.start()
-        base_url = f"http://127.0.0.1:{bad_server.server_port}"
-        try:
-            data = json.dumps({"image_base64": "QUJD"}).encode("utf-8")
-            request = urllib.request.Request(
-                f"{base_url}/estimate-weight",
-                data=data,
-                method="POST",
-                headers={"Content-Type": "application/json"},
+        # Silence the expected exception logging so the test run stays clean.
+        with mock.patch("app.logger") as silent_logger:
+            bad_server = create_server(
+                port=0, estimator=CowWeightEstimator(backend="ollama")
             )
-            with self.assertRaises(urllib.error.HTTPError) as context:
-                urllib.request.urlopen(request, timeout=10)
-            self.assertEqual(context.exception.code, 502)
-            error = json.loads(context.exception.read().decode("utf-8"))
-            self.assertEqual(error["code"], "estimation_failed")
-        finally:
-            bad_server.shutdown()
-            bad_server.server_close()
-            thread.join(timeout=5)
+            thread = threading.Thread(target=bad_server.serve_forever, daemon=True)
+            thread.start()
+            base_url = f"http://127.0.0.1:{bad_server.server_port}"
+            try:
+                data = json.dumps({"image_base64": "QUJD"}).encode("utf-8")
+                request = urllib.request.Request(
+                    f"{base_url}/estimate-weight",
+                    data=data,
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(request, timeout=10)
+                self.assertEqual(context.exception.code, 502)
+                error = json.loads(context.exception.read().decode("utf-8"))
+                self.assertEqual(error["code"], "estimation_failed")
+            finally:
+                bad_server.shutdown()
+                bad_server.server_close()
+                thread.join(timeout=5)
+        self.assertTrue(silent_logger.exception.called)
 
 
 class OllamaEstimatorTests(unittest.TestCase):
@@ -163,6 +166,23 @@ class OllamaEstimatorTests(unittest.TestCase):
             "data:application/octet-stream;base64,QUJD"
         )
         self.assertEqual(encoded, "QUJD")
+
+
+class GuiSmokeTests(unittest.TestCase):
+    """Build the Tk root and the main app, then destroy it. Catches import /
+    layout regressions in gui.py without requiring an interactive display."""
+
+    def test_app_builds_without_errors(self):
+        import tkinter as tk
+
+        from gui import CowWeightApp
+
+        root = tk.Tk()
+        try:
+            app = CowWeightApp(root)  # noqa: F841
+            root.update_idletasks()
+        finally:
+            root.destroy()
 
 
 if __name__ == "__main__":
