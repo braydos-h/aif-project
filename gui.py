@@ -106,6 +106,12 @@ class CowWeightApp:
         self._bind_shortcuts()
 
     def _build_layout(self) -> None:
+        """Create every widget and lay it out on a grid.
+
+        Rows 0–14: title, image picker, preview, backend/model/URL
+        selectors, prompt, buttons, status, result, model reply, history,
+        footer. The history treeview is the only row that stretches.
+        """
         frame = ttk.Frame(self.root, padding=20)
         frame.grid(sticky="nsew")
         self.root.columnconfigure(0, weight=1)
@@ -224,6 +230,8 @@ class CowWeightApp:
         footer.bind("<Button-1>", lambda _event: webbrowser.open(PROJECT_URL))
 
     def _bind_shortcuts(self) -> None:
+        """Wire keyboard shortcuts: Enter estimates from anywhere; in the
+        prompt box Enter keeps a newline and Ctrl+Enter estimates."""
         self.root.bind("<Return>", lambda _event: self.estimate())
         self.root.bind("<Control-Return>", lambda _event: self.estimate())
         # Let the prompt Text widget keep newlines on Enter; Ctrl+Enter estimates.
@@ -231,6 +239,8 @@ class CowWeightApp:
         self.prompt.bind("<Control-Return>", lambda _event: self.estimate())
 
     def choose_image(self) -> None:
+        """Open a file picker and, on selection, update the path field,
+        clear the result, and load the preview."""
         filename = filedialog.askopenfilename(
             title="Choose a cow image",
             filetypes=[
@@ -247,6 +257,12 @@ class CowWeightApp:
         self._load_preview(filename)
 
     def _load_preview(self, filename: str) -> None:
+        """Show a thumbnail of ``filename`` via Pillow.
+
+        When Pillow is unavailable (or the file can't be decoded), degrades
+        gracefully to showing the filename and byte size (or
+        "(preview unavailable)").
+        """
         if not PIL_AVAILABLE:
             size = os.path.getsize(filename)
             self.preview_label.configure(
@@ -265,6 +281,12 @@ class CowWeightApp:
             self.preview_label.configure(image="", text="(preview unavailable)")
 
     def estimate(self) -> None:
+        """Validate the selected file, snapshot the current settings, and
+        kick off an estimate on a background thread.
+
+        The last request is remembered in ``self.last_request`` so Retry can
+        re-run it (a ``"demo"`` marker means the demo-cow run).
+        """
         filename = self.image_path.get()
         if not filename or not os.path.isfile(filename):
             messagebox.showerror(WINDOW_TITLE, "Please choose an image file first.")
@@ -290,6 +312,12 @@ class CowWeightApp:
         ).start()
 
     def estimate_demo_cows(self) -> None:
+        """Run the estimator over every image in the ``cows/`` folder.
+
+        Files are picked up by extension (``DEMO_IMAGE_EXTS``), sorted by
+        name, and estimated one by one on a background thread with per-file
+        status updates and history rows.
+        """
         if not os.path.isdir(DEMO_COW_DIR):
             messagebox.showerror(WINDOW_TITLE, f"Demo cow folder not found: {DEMO_COW_DIR}")
             return
@@ -323,6 +351,9 @@ class CowWeightApp:
     def _estimate_demo_cows_in_background(
         self, demo_files: list[str], prompt: str, backend: str, model: str, ollama_url: str
     ) -> None:
+        """Background thread body for the demo-cow run: estimate each file
+        in order and report results back to the UI thread via ``after``.
+        Stops at the first error."""
         estimator = CowWeightEstimator(backend=backend, model=model, ollama_url=ollama_url)
         for index, filename in enumerate(demo_files, start=1):
             message = f"Estimating {_short_name(filename)} ({index}/{len(demo_files)})…"
