@@ -1,5 +1,14 @@
 # Commits
 
+## 2026-08-19 13:10 (session: harden start_gui.bat)
+- **`start_gui.bat` now robust:** `cd`s to the script directory so `.env`
+  resolution and relative paths work regardless of where it's double-clicked
+  from; verifies `gui.py` exists next to the script; locates `pythonw.exe`
+  via PATH (falling back to `python.exe` so the GUI still opens with a
+  console window if `pythonw` is missing); prints a clear, paused error
+  message if Python is not installed. Verified by launching the GUI twice
+  (window title "Cow Weight Estimator" appeared both times).
+
 ## 2026-08-19 15:10 (session: repo cleanup + package restructure)
 - **Restructured the codebase into a proper Python package (`aif/`):**
   - Split `app.py` into `aif/config.py` (constants, defaults, `.env` loader,
