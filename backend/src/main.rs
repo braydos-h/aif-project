@@ -20,17 +20,13 @@ fn main() -> std::io::Result<()> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--host" => {
-                if i + 1 < args.len() {
-                    host = args[i + 1].clone();
-                    i += 1;
-                }
+            "--host" if i + 1 < args.len() => {
+                host = args[i + 1].clone();
+                i += 1;
             }
-            "--port" => {
-                if i + 1 < args.len() {
-                    port = args[i + 1].parse().unwrap_or(8080);
-                    i += 1;
-                }
+            "--port" if i + 1 < args.len() => {
+                port = args[i + 1].parse().unwrap_or(8080);
+                i += 1;
             }
             _ => {}
         }
