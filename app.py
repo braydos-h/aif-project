@@ -324,7 +324,10 @@ class CowWeightEstimator:
                     error_detail = json.loads(error_body).get("error", error_body)
                 except json.JSONDecodeError:
                     error_detail = error_body
-                detail = error_detail.strip() if isinstance(error_detail, str) else str(error_detail)
+                if isinstance(error_detail, str):
+                    detail = error_detail.strip()
+                else:
+                    detail = str(error_detail)
                 message = detail or exc.reason
                 last_exc = ValueError(
                     f"Ollama request failed (HTTP {exc.code}): {message}"
