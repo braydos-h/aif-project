@@ -149,6 +149,35 @@ def _validate_image_bytes(image_bytes: bytes) -> None:
 
 
 class CowWeightEstimator:
+    """Estimate a cow's weight from an image reference.
+
+    Decoupled from HTTP: the same class is used by the ``EstimateHandler``
+    and by ``gui.py``. Configuration comes from constructor arguments that
+    fall back to environment variables / the ``.env`` file, which are read
+    once at import time — changing env vars after construction has no
+    effect on a running server.
+
+    Args:
+        model: Model name sent to the backend. Defaults to ``AIF_AI_MODEL``
+            or ``DEFAULT_OLLAMA_MODEL``.
+        backend: ``"ollama"`` (default) or ``"none"``. Defaults to the
+            ``AIF_AI_BACKEND`` env var.
+        ollama_url: Ollama-compatible generate endpoint. Defaults to
+            ``AIF_OLLAMA_URL`` or ``DEFAULT_OLLAMA_URL``.
+        cache_ttl: Seconds to cache ollama results per image (0 disables).
+            Defaults to ``AIF_CACHE_TTL`` or ``DEFAULT_CACHE_TTL``.
+
+    Backends:
+        - ``ollama`` — POSTs the image (base64) and prompt to the Ollama
+          Cloud endpoint with a bearer token, retrying once on transient
+          failures. The reply is parsed as structured JSON first
+          (``{"weight_kg": ..., ...}``) and falls back to free-text weight
+          extraction; see ``_parse_structured_response``.
+        - ``none`` — deterministic SHA-256-derived estimate in the range
+          250–900 kg, no network. Stable for a given input (tests rely on
+          this). Reports ``source == "local_fallback"``.
+    """
+
     def __init__(
         self,
         model: str | None = None,
