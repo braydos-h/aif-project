@@ -35,7 +35,7 @@ ignore = []
 "tests/*" = ["E501"]
 
 [tool.coverage.run]
-source = ["app", "gui"]
+source = ["aif"]
 branch = true
 
 [tool.coverage.report]
@@ -46,4 +46,4 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["app", "gui"]
+packages = ["aif"]

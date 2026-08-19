@@ -217,42 +217,7 @@ class StructuredResponseTests(unittest.TestCase):
 
 
 class CacheTests(unittest.TestCase):
-    def _counting_estimator(self, responses, cache_ttl=300):
-        class FakeResponse:
-            def __init__(self, weight):
-                self.weight = weight
-
-            def read(self):
-                return f'{{"response": "{self.weight} kg"}}'.encode()
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc_value, traceback):
-                return False
-
-        call_count = 0
-        response_pool = responses
-
-        def counting_urlopen(*args, **kwargs):
-            nonlocal call_count
-            if isinstance(response_pool, list):
-                return response_pool.pop(0)
-            call_count += 1
-            return response_pool
-
-        with mock.patch.dict(
-            "os.environ",
-            {
-                "AIF_OLLAMA_URL": "https://ollama.com/api/generate",
-                "OLLAMA_API_KEY": "test-key",
-            },
-            clear=False,
-        ), mock.patch("urllib.request.urlopen", side_effect=counting_urlopen):
-            return CowWeightEstimator(backend="ollama", cache_ttl=cache_ttl), lambda: call_count
-
     def test_cache_returns_same_result_for_repeat_image(self):
-        estimator, count = self._counting_estimator(FakeResponse := None) if False else (None, None)  # noqa: F841
         call_count = 0
 
         class FakeResponse:

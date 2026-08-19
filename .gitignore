@@ -6,4 +6,5 @@ dist/
 *.spec
 .coverage
 htmlcov/
+.ruff_cache/
 497789W-AIF10-AT1-Brayden-Habets \[Autosaved\].pptx

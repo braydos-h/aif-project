@@ -6,7 +6,14 @@ After every session add to the commits.md file with stuff you have done and the 
 For conventions, repository layout, and step-by-step guides for common changes (new backend, new endpoint, GUI work), read [CONTRIBUTING.md](CONTRIBUTING.md).
 ## What this is
 
-A single-file Python HTTP service (`app.py`) plus a Tkinter desktop GUI (`gui.py`) that estimate a cow's weight from an image payload. No external runtime dependencies — standard library only (`http.server`, `urllib`, `hashlib`, `base64`, `re`, `logging`, `tkinter`, plus `time`/`uuid`/`json`). Configuration is loaded from a `.env` file at startup via a stdlib-only loader (`_load_env_file`); environment variables already set take precedence over `.env`. Project metadata and the ruff config live in `pyproject.toml`.
+A Python package (`aif/`) that estimates a cow's weight from an image payload, shipped as an HTTP service and a Tkinter desktop GUI. No external runtime dependencies — standard library only (`http.server`, `urllib`, `hashlib`, `base64`, `re`, `logging`, `tkinter`, plus `time`/`uuid`/`json`). Configuration is loaded from a `.env` file at startup via a stdlib-only loader (`aif/config.py:_load_env_file`); environment variables already set take precedence over `.env`. Project metadata and the ruff config live in `pyproject.toml`. `app.py` and `gui.py` at the repo root are thin backward-compatible wrappers over `aif.server` / `aif.gui` so `python app.py` / `python gui.py` keep working.
+
+Module layout:
+
+- `aif/config.py` — constants, defaults, `.env` loader (`_load_env_file`), `setup_logging`.
+- `aif/estimator.py` — `CowWeightEstimator`, `ImageValidationError`, image validation helpers.
+- `aif/server.py` — `EstimateHandler`, `create_server`.
+- `aif/gui.py` — `CowWeightApp` (Tkinter).
 
 ## Backend selection
 
@@ -33,7 +40,7 @@ python -m unittest discover -s tests -v
 
 Run a single test:
 ```bash
-python -m unittest tests.test_app.EstimateApiTests.test_estimate_weight_with_image_url -v
+python -m unittest tests.test_estimator.OllamaEstimatorTests.test_cloud_endpoint_uses_bearer_token -v
 ```
 
 Lint with ruff (configured in `pyproject.toml`):
@@ -44,16 +51,22 @@ ruff check --fix .
 
 ## Architecture
 
-The service has two layers, both in `app.py`:
+The core has two layers:
 
-- **`CowWeightEstimator`** — the estimation logic, decoupled from HTTP. `estimate()` dispatches on the configured backend (see "Backend selection" above): `ollama` (default) or `none`. Returns a dict including `estimated_weight_kg`, `estimated_weight_lbs`, `source`, `prompt_used`, and `model_response` (raw model text, empty for the fallback), plus `confidence`/`breed`/`body_condition_score` when the model returned JSON.
+- **`CowWeightEstimator`** (`aif/estimator.py`) — the estimation logic, decoupled from HTTP. `estimate()` dispatches on the configured backend (see "Backend selection" above): `ollama` (default) or `none`. Returns a dict including `estimated_weight_kg`, `estimated_weight_lbs`, `source`, `prompt_used`, and `model_response` (raw model text, empty for the fallback), plus `confidence`/`breed`/`body_condition_score` when the model returned JSON.
 
-- **`EstimateHandler`** — `BaseHTTPRequestHandler` subclass. Valid routes: `POST /estimate-weight` (the estimator), `GET /health` (liveness: status/backend/model/request_id), `GET /` or `/info` (name/version/endpoints), `OPTIONS` (CORS preflight → 204); anything else returns 404. The POST handler accepts `image_url` **or** `image_base64` plus an optional `prompt` (defaults to `DEFAULT_PROMPT`). `ImageValidationError` surfaces as `400 invalid_image`; other estimator `ValueError`s surface as `502 Bad Gateway`; bad input as `400`. Every error response carries a machine-readable `code` field (`missing_body`, `invalid_json`, `missing_image`, `invalid_image`, `not_found`, `estimation_failed`) alongside the human `error` message. Every response (success or error) includes a per-request `request_id` (8-char uuid hex) in the JSON body and the `x-request-id` header, and CORS headers (`Access-Control-Allow-Origin: *`). Access and error logs go through the `aif` logger, tagged with the request id.
+- **`EstimateHandler`** (`aif/server.py`) — `BaseHTTPRequestHandler` subclass. Valid routes: `POST /estimate-weight` (the estimator), `GET /health` (liveness: status/backend/model/request_id), `GET /` or `/info` (name/version/endpoints), `OPTIONS` (CORS preflight → 204); anything else returns 404. The POST handler accepts `image_url` **or** `image_base64` plus an optional `prompt` (defaults to `DEFAULT_PROMPT`). `ImageValidationError` surfaces as `400 invalid_image`; other estimator `ValueError`s surface as `502 Bad Gateway`; bad input as `400`. Every error response carries a machine-readable `code` field (`missing_body`, `invalid_json`, `missing_image`, `invalid_image`, `not_found`, `estimation_failed`) alongside the human `error` message. Every response (success or error) includes a per-request `request_id` (8-char uuid hex) in the JSON body and the `x-request-id` header, and CORS headers (`Access-Control-Allow-Origin: *`). Access and error logs go through the `aif` logger, tagged with the request id.
 
 The estimator is injected into the server via `create_server(host, port, estimator=None)` and read off `self.server.estimator` in the handler — no shared class attribute. Default estimator (when `None`) is built once from env vars / `.env` present at startup; changing them after launch has no effect on a running server.
 
-`gui.py` is a Tkinter desktop app (`CowWeightApp`) that lets the user pick an image file, edit the prompt, switch backend/model at runtime, and view the weight, the model's full reply, and a session history. It constructs a fresh `CowWeightEstimator` per request from the UI-selected backend/model. Image preview uses Pillow if importable, otherwise degrades to showing the filename and byte size. Keyboard: `Enter` estimates (in the prompt box, use `Ctrl+Enter` to keep newlines free).
+`aif/gui.py` is a Tkinter desktop app (`CowWeightApp`) that lets the user pick an image file, edit the prompt, switch backend/model at runtime, and view the weight, the model's full reply, and a session history. It constructs a fresh `CowWeightEstimator` per request from the UI-selected backend/model. Image preview uses Pillow if importable, otherwise degrades to showing the filename and byte size. Keyboard: `Enter` estimates (in the prompt box, use `Ctrl+Enter` to keep newlines free). The `cows/` folder holds demo images used by the "Test demo cows" button.
 
 ## Tests
 
-`tests/test_app.py` boots a real `create_server(port=0, estimator=...)` on a background thread and exercises it over real HTTP (not in-process handler calls), so it validates the full request/response path including status codes and JSON serialization. The HTTP tests force `backend="none"` so they use the deterministic fallback (no running Ollama needed) and assert `source == "local_fallback"`. A 502 test forces `backend="ollama"` with no key and asserts `code == "estimation_failed"`; a 400 test forces `backend="ollama"` with a key but non-image bytes and asserts `code == "invalid_image"`. Other HTTP tests cover `GET /health`, `GET /`, 404 on unknown GET, `OPTIONS` preflight → 204, CORS header on success, and `request_id` in header+body. A separate `OllamaEstimatorTests` class unit-tests the Ollama-specific helpers (`_extract_weight_from_text`, `_to_base64_image` incl. magic-byte validation, `_parse_structured_response`) and backend selection logic; the live Ollama network path is not exercised. `CacheTests` covers cache hit/disabled/expiry; `RetryTests` covers retry-on-URL-error-then-succeed, no-retry-on-4xx, and retry-on-5xx-then-raise. `GuiSmokeTests` builds the Tk root + `CowWeightApp` and destroys it, catching import/layout regressions in `gui.py` without an interactive display. Tests use a minimal real PNG (`_png_bytes()`) for any input that must pass image validation.
+Tests live in `tests/` split by concern:
+
+- `tests/test_server.py` boots a real `create_server(port=0, estimator=...)` on a background thread and exercises it over real HTTP (not in-process handler calls), so it validates the full request/response path including status codes and JSON serialization. The HTTP tests force `backend="none"` so they use the deterministic fallback (no running Ollama needed) and assert `source == "local_fallback"`. A 502 test forces `backend="ollama"` with no key and asserts `code == "estimation_failed"`; a 400 test forces `backend="ollama"` with a key but non-image bytes and asserts `code == "invalid_image"`. Other HTTP tests cover `GET /health`, `GET /`, 404 on unknown GET, `OPTIONS` preflight → 204, CORS header on success, and `request_id` in header+body.
+- `tests/test_estimator.py` unit-tests the estimator: the Ollama-specific helpers (`_extract_weight_from_text`, `_to_base64_image` incl. magic-byte validation, `_parse_structured_response`), backend selection logic, `CacheTests` (cache hit/disabled/expiry), and `RetryTests` (retry-on-URL-error-then-succeed, no-retry-on-4xx, retry-on-5xx-then-raise). The live Ollama network path is not exercised.
+- `tests/test_gui.py` has `GuiSmokeTests`, which builds the Tk root + `CowWeightApp` and destroys it, catching import/layout regressions in `aif/gui.py` without an interactive display, plus an import check for the `gui.py` entry wrapper.
+
+Tests use a minimal real PNG (`_png_bytes()`) for any input that must pass image validation. When mocking module-level names, patch `aif.server.logger` / `aif.estimator.logger` (not the root `aif` logger).
