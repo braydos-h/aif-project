@@ -1,97 +1,98 @@
 # Cow Weight Estimator
 
-Estimate a cow's weight from a photo. Ships as a **Rust HTTP API**
-(`backend/`, crate `aif-backend`) and a Tkinter desktop app (`aif/gui.py`).
-The Python package (`aif/`) is GUI + estimator only; the HTTP server is
-Rust. The Python side is stdlib-only (no `pip install` required); the Rust
-side has three dependencies (`ureq` with rustls TLS, `serde_json`, `sha2`).
+Turn a photo of a cow into a **rough weight estimate**. This project has a friendly Windows app for people and a fast web API for other programs.
 
-New here? Read [CONTRIBUTING.md](CONTRIBUTING.md) for conventions, the
-repository layout, and step-by-step guides for common changes.
+> **A quick note on accuracy:** this is an AI estimate, not a replacement for a scale, veterinary advice, or an official livestock record.
 
-The default backend is **Ollama Cloud**, which sends the image to a vision
-model and extracts the weight from its reply. A deterministic offline
-fallback is included for testing and air-gapped use.
+![The Cow Weight Estimator desktop app, ready to choose an image](docs/images/desktop-app.png)
 
----
+## Start here
 
-## Highlights
+If you just want to try it, double-click `start_gui.bat`. Pick a cow photo, then select **Estimate weight**. You do not need to run a server or understand the code to use the desktop app.
 
-- **Two interfaces, one contract.** A JSON HTTP API for automation (Rust)
-  and a double-clickable Windows GUI for interactive use
-  (Python/Tkinter). Both share the same `.env` configuration and the same
-  estimate shape (`estimated_weight_kg`, `estimated_weight_lbs`, `source`,
-  `model_response`, ...).
-- **A threaded Rust server.** The API runs on a hand-rolled HTTP/1.1
-  server (`std::net::TcpListener`, one thread per connection), so slow
-  Ollama requests never block each other. Concurrent requests run in
-  parallel.
-- **Few moving parts.** Python is pure standard library (`urllib`,
-  `hashlib`, `base64`, `re`, `logging`, `tkinter`) with its own
-  stdlib-only `.env` loader; Rust pulls in only `ureq` (TLS via rustls),
-  `serde_json`, and `sha2` (no async runtime, no web framework). Pillow is
-  optional. If installed, the GUI shows an image preview; if not, it
-  degrades to showing the filename and byte size.
-- **Pluggable backend.** `ollama` (vision model via Ollama Cloud, default)
-  or `none` (stable SHA-256-derived local estimate, no network), selectable
-  via `AIF_AI_BACKEND` in both the server and the GUI's runtime selector.
-- **Robust input handling.** Accepts `image_url` or raw/base64
-  `image_base64`, including `data:` URIs. Strips WebP data-URI prefixes
-  even when Windows labels them `application/octet-stream`.
-- **Structured errors.** Every error response carries a machine-readable
-  `code` field (`missing_image`, `invalid_image`, `estimation_failed`, ...)
-  alongside the human message. Every response (success or error) also
-  carries a `request_id` (8-char hex) echoed in both the `x-request-id`
-  header and the JSON body, and flows through the server's stderr logs so a
-  request can be traced end to end.
-- **CORS-friendly.** All responses include `Access-Control-Allow-Origin:
-  *`, and `OPTIONS` preflight returns `204 No Content`. A browser page can
-  call the API directly.
-- **Smarter estimates.** The default prompt asks the model for a JSON
-  object with `weight_kg`, `confidence` (0-1), `breed`, and
-  `body_condition_score` (1-9). When the model returns JSON, those fields
-  are added to the response; when it doesn't, the estimator falls back to
-  the existing `<n> kg` / first-number text extraction. Both backends also
-  return `estimated_weight_lbs` alongside `estimated_weight_kg`.
-- **In-memory cache.** Repeated requests for the same image return
-  instantly from cache (keyed by `sha256` of the base64 image, TTL
-  configurable via `AIF_CACHE_TTL`, default 300 s, `0` disables).
-- **Retry with backoff.** Transient Ollama failures (5xx, network/timeout
-  errors) are retried once after a 1 s backoff. 4xx errors and unparseable
-  responses are not retried.
-- **Image validation.** Image bytes are checked against
-  JPEG/PNG/GIF/BMP/WebP magic bytes before being sent to the model.
-  Non-images are rejected with `400 invalid_image` instead of wasting a
-  model call.
-- **Tested.** The Python HTTP suite spawns the real Rust binary and
-  exercises it over real sockets (status codes, JSON serialization, CORS,
-  request IDs, concurrency). Rust unit tests cover each module; Python unit
-  tests cover the estimator's parsing/cache/retry logic plus a GUI smoke
-  test.
-- **One-file Windows `.exe`s.** A GitHub Actions workflow builds both the
-  Rust backend and a standalone `CowWeightEstimator.exe` (PyInstaller) on
-  every published release.
+```powershell
+python gui.py
+```
 
----
+![The completed built-in offline demo, with three example estimates in the history](docs/images/offline-demo.png)
 
-## Requirements
+The **Test demo cows** button runs three included photos. In the screenshot it is set to `none`, the offline practice mode: it does not use the internet or an AI service.
 
-- **Rust toolchain** (for the API server): [rustup](https://rustup.rs/).
-  - On Windows without Visual Studio Build Tools, install the GNU
-    toolchain too: `rustup toolchain install stable-gnu`, then build with
-    `cargo +stable-gnu build --release --manifest-path backend/Cargo.toml`.
-- **Python 3.8+** (tested on 3.12 in CI) for the GUI. No third-party
-  packages; `tkinter` ships with standard Python installers on Windows.
-- For the Ollama Cloud backend: an Ollama API key (see
-  [Configuration](#configuration)).
+## What happens when you press the button?
+
+1. You choose a photo of a cow.
+2. The app checks that it really looks like an image file.
+3. With the normal **Ollama** setting, the photo and a short question go to an AI vision model.
+4. The app reads the model's answer and shows kilograms and pounds, plus any confidence or breed details it received.
+
+For practice, testing, or no-internet situations, choose `none`. It produces a repeatable placeholder result from the file data; it is useful for checking the app works, but it is **not** a real cow-weight prediction.
+
+## Why these tools?
+
+| Tool | Plain-English job | Why it is a good fit |
+| --- | --- | --- |
+| **Ollama Cloud** | The optional AI service that looks at the cow photo. | It lets the project use a capable vision model without downloading a huge model to every computer. It can be a cost-conscious choice for small projects because you only make requests when you estimate a photo; check Ollama's current pricing before using it at scale. |
+| **Python + Tkinter** | The simple, click-and-use desktop window. | Python is easy to read and Tkinter is included with normal Python on Windows, so the GUI stays small and does not need a pile of extra downloads. |
+| **Rust** | The optional web/API service for websites and other software. | Rust is compiled and fast, so it is a strong fit for a backend that can handle several requests without one slow AI response freezing everybody else. |
+| **`none` mode** | An offline demo and test mode. | It avoids network costs and makes tests give the same result every time. |
+
+## The code, in normal words
+
+You do not need to read every file. The folders below are the main moving parts.
+
+```mermaid
+flowchart LR
+    Photo["Cow photo"] --> GUI["Python desktop app"]
+    GUI --> AI["Ollama Cloud AI\nnormal estimates"]
+    GUI --> Offline["Offline mode\ndemos and tests"]
+    Photo --> API["Rust API\nfor other apps"]
+    API --> AI
+    API --> Offline
+```
+
+| If you want to understand or change… | Look here | What it does |
+| --- | --- | --- |
+| The window people click | [`aif/gui.py`](aif/gui.py) | Creates the buttons, image picker, result area, and history list. |
+| The AI question and result reading | [`aif/estimator.py`](aif/estimator.py) | Sends an image to Ollama, reads the answer, and checks images are valid. |
+| Settings such as the model name or API key | [`aif/config.py`](aif/config.py) and [`.env.example`](.env.example) | Holds safe defaults and reads your local `.env` settings file. |
+| The fast web service | [`backend/src/http.rs`](backend/src/http.rs) | Receives requests from other software and returns an estimate as JSON. |
+| The Rust server's supporting jobs | [`backend/src/`](backend/src/) | `validate.rs` checks images, `parse.rs` reads AI answers, `ollama.rs` talks to Ollama, `cache.rs` remembers repeat requests, and `fallback.rs` powers offline mode. |
+| Starting the API | [`app.py`](app.py) | Finds and starts the Rust backend. |
+| Starting the desktop app | [`gui.py`](gui.py) or [`start_gui.bat`](start_gui.bat) | Opens the friendly Python window. |
+| Making sure it keeps working | [`tests/`](tests/) | Tests the GUI, Python logic, and the real Rust API. |
+
+## Want to use the API instead?
+
+The API is for a website, mobile app, or another program—not needed for the desktop app. Build and start it like this:
+
+```powershell
+cargo build --release --manifest-path backend/Cargo.toml
+python app.py
+```
+
+It listens at `http://127.0.0.1:8080`. The detailed endpoints are below in the [API reference](#api-reference).
+
+## Before using Ollama
+
+Ollama is the normal AI option. Create an API key at <https://ollama.com/settings/keys>, copy `.env.example` to `.env`, then add your key:
+
+```ini
+OLLAMA_API_KEY=your-key-here
+```
+
+Keep that key private: `.env` is ignored by Git and should never be uploaded. For the full list of settings, see [Configuration](#configuration).
 
 ---
 
-## Quick start
+## Technical reference
 
-### Desktop app (Windows)
+### Requirements
 
-Double-click `start_gui.bat`, or run:
+- **Python 3.8+** for the desktop app. It uses Tkinter, which comes with normal Windows Python installs; no `pip install` is required.
+- **Rust** only if you want to run the optional API server. Install it through [rustup](https://rustup.rs/).
+- An **Ollama API key** only for real AI estimates. The offline `none` mode needs neither an account nor an internet connection.
+
+### Desktop app details
 
 ```powershell
 python gui.py
