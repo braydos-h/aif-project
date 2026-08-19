@@ -1,17 +1,37 @@
 """Windows desktop interface for estimating a cow's weight from an image."""
 
 import base64
+import logging
 import mimetypes
 import os
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Optional
 
-from app import CowWeightEstimator, DEFAULT_PROMPT
+from app import (
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_PROMPT,
+    CowWeightEstimator,
+    setup_logging,
+)
+
+try:
+    from PIL import Image, ImageTk  # type: ignore[import-not-found]
+
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 
 WINDOW_TITLE = "Cow Weight Estimator"
+PREVIEW_SIZE = (160, 160)
+HISTORY_COLUMNS = ("time", "image", "weight", "source")
+HISTORY_MAX_ROWS = 20
+BACKEND_CHOICES = ("ollama", "none")
+
+
+logger = logging.getLogger("aif.gui")
 
 
 def image_file_to_data_uri(filename: str) -> str:
@@ -22,41 +42,128 @@ def image_file_to_data_uri(filename: str) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
+def _short_name(path: str, width: int = 32) -> str:
+    name = os.path.basename(path)
+    return name if len(name) <= width else name[: width - 1] + "…"
+
+
 class CowWeightApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(WINDOW_TITLE)
-        self.root.minsize(560, 310)
+        self.root.minsize(720, 560)
+
         self.image_path = tk.StringVar()
         self.status_text = tk.StringVar(value="Choose a cow image to begin.")
         self.result_text = tk.StringVar(value="")
+        self.backend_var = tk.StringVar(value=CowWeightEstimator().backend)
+        self.model_var = tk.StringVar(value=DEFAULT_OLLAMA_MODEL)
+        self.preview_image: ImageTk.PhotoImage | None = None  # keep ref
 
-        frame = ttk.Frame(root, padding=20)
+        self._build_layout()
+        self._bind_shortcuts()
+
+    def _build_layout(self) -> None:
+        frame = ttk.Frame(self.root, padding=20)
         frame.grid(sticky="nsew")
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=1)
 
         ttk.Label(frame, text="Cow Weight Estimator", font=("Segoe UI", 16, "bold")).grid(
-            row=0, column=0, columnspan=2, sticky="w"
+            row=0, column=0, columnspan=3, sticky="w"
         )
+
+        # --- Image picker + preview ---
         ttk.Label(frame, text="Image file").grid(row=1, column=0, sticky="w", pady=(18, 4))
         ttk.Entry(frame, textvariable=self.image_path, state="readonly").grid(
-            row=2, column=0, sticky="ew", padx=(0, 8)
+            row=2, column=0, columnspan=2, sticky="ew", padx=(0, 8)
         )
-        ttk.Button(frame, text="Browse…", command=self.choose_image).grid(row=2, column=1)
+        ttk.Button(frame, text="Browse…", command=self.choose_image).grid(row=2, column=2)
 
-        ttk.Label(frame, text="Prompt (optional)").grid(row=3, column=0, sticky="w", pady=(14, 4))
+        self.preview_label = ttk.Label(frame, text="(no image)", anchor="center", relief="sunken")
+        self.preview_label.grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(8, 0), ipadx=4, ipady=4
+        )
+        self.preview_label.configure(width=24)
+
+        # --- Backend / model selectors ---
+        selector_frame = ttk.Frame(frame)
+        selector_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        selector_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(selector_frame, text="Backend").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.backend_combo = ttk.Combobox(
+            selector_frame,
+            textvariable=self.backend_var,
+            values=BACKEND_CHOICES,
+            state="readonly",
+            width=10,
+        )
+        self.backend_combo.grid(row=0, column=1, sticky="w")
+
+        ttk.Label(selector_frame, text="Model").grid(row=0, column=2, sticky="w", padx=(16, 8))
+        self.model_entry = ttk.Entry(selector_frame, textvariable=self.model_var, width=24)
+        self.model_entry.grid(row=0, column=3, sticky="w")
+
+        # --- Prompt ---
+        ttk.Label(frame, text="Prompt (optional)").grid(row=5, column=0, sticky="w", pady=(14, 4))
         self.prompt = tk.Text(frame, height=4, wrap="word")
         self.prompt.insert("1.0", DEFAULT_PROMPT)
-        self.prompt.grid(row=4, column=0, columnspan=2, sticky="ew")
+        self.prompt.grid(row=6, column=0, columnspan=3, sticky="ew")
 
-        self.estimate_button = ttk.Button(frame, text="Estimate weight", command=self.estimate)
-        self.estimate_button.grid(row=5, column=0, sticky="w", pady=(16, 8))
-        ttk.Label(frame, textvariable=self.status_text).grid(row=6, column=0, columnspan=2, sticky="w")
-        ttk.Label(frame, textvariable=self.result_text, font=("Segoe UI", 14, "bold")).grid(
-            row=7, column=0, columnspan=2, sticky="w", pady=(8, 0)
+        # --- Buttons + progress ---
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=7, column=0, columnspan=3, sticky="w", pady=(16, 8))
+        self.estimate_button = ttk.Button(
+            button_frame, text="Estimate weight", command=self.estimate
         )
+        self.estimate_button.pack(side="left")
+        self.copy_button = ttk.Button(
+            button_frame, text="Copy result", command=self.copy_result, state="disabled"
+        )
+        self.copy_button.pack(side="left", padx=(8, 0))
+
+        self.progress = ttk.Progressbar(button_frame, mode="indeterminate", length=160)
+        self.progress.pack(side="left", padx=(16, 0))
+
+        ttk.Label(frame, textvariable=self.status_text).grid(
+            row=8, column=0, columnspan=3, sticky="w"
+        )
+        ttk.Label(frame, textvariable=self.result_text, font=("Segoe UI", 14, "bold")).grid(
+            row=9, column=0, columnspan=3, sticky="w", pady=(8, 0)
+        )
+
+        # --- Model reply (read-only) ---
+        ttk.Label(frame, text="Model reply").grid(row=10, column=0, sticky="w", pady=(10, 4))
+        self.reply_text = tk.Text(frame, height=4, wrap="word", state="disabled")
+        self.reply_text.grid(row=11, column=0, columnspan=3, sticky="ew")
+
+        # --- History ---
+        ttk.Label(frame, text="History (this session)").grid(
+            row=12, column=0, sticky="w", pady=(14, 4)
+        )
+        self.history = ttk.Treeview(
+            frame, columns=HISTORY_COLUMNS, show="headings", height=6
+        )
+        for col, label, width in [
+            ("time", "Time", 90),
+            ("image", "Image", 260),
+            ("weight", "Weight (kg)", 100),
+            ("source", "Source", 120),
+        ]:
+            self.history.heading(col, text=label)
+            self.history.column(col, width=width, stretch=(col == "image"))
+        self.history.grid(row=13, column=0, columnspan=3, sticky="nsew")
+        frame.rowconfigure(13, weight=1)
+
+    def _bind_shortcuts(self) -> None:
+        self.root.bind("<Return>", lambda _event: self.estimate())
+        self.root.bind("<Control-Return>", lambda _event: self.estimate())
+        # Let the prompt Text widget keep newlines on Enter; Ctrl+Enter estimates.
+        self.prompt.bind("<Return>", lambda event: ("break",))
+        self.prompt.bind("<Control-Return>", lambda _event: self.estimate())
 
     def choose_image(self) -> None:
         filename = filedialog.askopenfilename(
@@ -66,10 +173,31 @@ class CowWeightApp:
                 ("All files", "*.*"),
             ],
         )
-        if filename:
-            self.image_path.set(filename)
-            self.status_text.set("Ready to estimate.")
-            self.result_text.set("")
+        if not filename:
+            return
+        self.image_path.set(filename)
+        self.status_text.set("Ready to estimate.")
+        self.result_text.set("")
+        self._set_reply("")
+        self._load_preview(filename)
+
+    def _load_preview(self, filename: str) -> None:
+        if not PIL_AVAILABLE:
+            size = os.path.getsize(filename)
+            self.preview_label.configure(
+                text=f"{_short_name(filename)}\n{size} bytes (preview needs Pillow)",
+                image="",
+            )
+            return
+        try:
+            with Image.open(filename) as img:
+                img = img.convert("RGB")
+                img.thumbnail(PREVIEW_SIZE)
+                self.preview_image = ImageTk.PhotoImage(img)
+            self.preview_label.configure(image=self.preview_image, text="")
+        except OSError as exc:
+            logger.warning("preview failed for %s: %s", filename, exc)
+            self.preview_label.configure(image="", text="(preview unavailable)")
 
     def estimate(self) -> None:
         filename = self.image_path.get()
@@ -78,31 +206,85 @@ class CowWeightApp:
             return
 
         prompt = self.prompt.get("1.0", "end").strip() or DEFAULT_PROMPT
+        backend = self.backend_var.get()
+        model = self.model_var.get().strip() or DEFAULT_OLLAMA_MODEL
         self.estimate_button.configure(state="disabled")
+        self.copy_button.configure(state="disabled")
         self.status_text.set("Estimating weight…")
         self.result_text.set("")
-        threading.Thread(target=self._estimate_in_background, args=(filename, prompt), daemon=True).start()
+        self._set_reply("")
+        self.progress.start(10)
+        threading.Thread(
+            target=self._estimate_in_background,
+            args=(filename, prompt, backend, model),
+            daemon=True,
+        ).start()
 
-    def _estimate_in_background(self, filename: str, prompt: str) -> None:
+    def _estimate_in_background(
+        self, filename: str, prompt: str, backend: str, model: str
+    ) -> None:
         try:
-            result = CowWeightEstimator().estimate(image_file_to_data_uri(filename), prompt)
+            estimator = CowWeightEstimator(backend=backend, model=model)
+            result = estimator.estimate(image_file_to_data_uri(filename), prompt)
         except (OSError, ValueError) as exc:
             self.root.after(0, self._show_error, str(exc))
             return
-        self.root.after(0, self._show_result, result["estimated_weight_kg"], result["source"])
+        self.root.after(
+            0,
+            self._show_result,
+            result["estimated_weight_kg"],
+            result["source"],
+            result.get("model_response", ""),
+            filename,
+        )
 
     def _show_error(self, error: str) -> None:
+        self.progress.stop()
         self.status_text.set("Could not estimate weight.")
         self.estimate_button.configure(state="normal")
         messagebox.showerror(WINDOW_TITLE, error)
 
-    def _show_result(self, weight_kg: float, source: str) -> None:
+    def _show_result(
+        self, weight_kg: float, source: str, reply: str, filename: str
+    ) -> None:
+        self.progress.stop()
         self.status_text.set(f"Estimate completed using {source}.")
         self.result_text.set(f"Estimated weight: {weight_kg:g} kg")
         self.estimate_button.configure(state="normal")
+        self.copy_button.configure(state="normal")
+        self._set_reply(reply)
+        self._add_history(weight_kg, source, filename)
+
+    def _set_reply(self, text: str) -> None:
+        self.reply_text.configure(state="normal")
+        self.reply_text.delete("1.0", "end")
+        if text:
+            self.reply_text.insert("1.0", text)
+        self.reply_text.configure(state="disabled")
+
+    def _add_history(self, weight_kg: float, source: str, filename: str) -> None:
+        timestamp = time.strftime("%H:%M:%S")
+        self.history.insert(
+            "",
+            "end",
+            values=(timestamp, _short_name(filename), f"{weight_kg:g}", source),
+        )
+        children = self.history.get_children("")
+        if len(children) > HISTORY_MAX_ROWS:
+            self.history.delete(children[0])
+
+    def copy_result(self) -> None:
+        text = self.result_text.get()
+        if not text:
+            return
+        weight = text.replace("Estimated weight: ", "")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(weight)
+        self.status_text.set(f"Copied: {weight}")
 
 
 def main() -> None:
+    setup_logging()
     root = tk.Tk()
     CowWeightApp(root)
     root.mainloop()
