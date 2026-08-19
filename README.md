@@ -1,8 +1,8 @@
 # Cow Weight Estimator
 
 Estimate a cow's weight from a photo. Ships as a dependency-free Python HTTP
-API (`app.py`) and a Tkinter desktop app (`gui.py`). Standard library only —
-no `pip install` required to run.
+API (`aif/server.py`) and a Tkinter desktop app (`aif/gui.py`). Standard
+library only — no `pip install` required to run.
 
 New here? Read [CONTRIBUTING.md](CONTRIBUTING.md) for conventions, the
 repository layout, and step-by-step guides for common changes.
@@ -138,7 +138,7 @@ Estimate a cow's weight from an image. Send **either** `image_url` **or**
 | -------------- | ------ | ------------------------- | -------------------------------------------------------------------------------------- |
 | `image_url`    | string | one of `image_*` required | URL the server will fetch (HTTPS or HTTP) and encode.                                  |
 | `image_base64` | string | one of `image_*` required | Raw base64 image bytes, or a `data:<mime>;base64,...` URI.                              |
-| `prompt`       | string | no                        | Override the estimation prompt. Defaults to `DEFAULT_PROMPT` from `app.py`.           |
+| `prompt`       | string | no                        | Override the estimation prompt. Defaults to `DEFAULT_PROMPT` from `aif/config.py`. |
 
 #### Example: URL
 
@@ -268,13 +268,13 @@ bearer-token auth via `unittest.mock`. `StructuredResponseTests` covers the
 JSON-vs-text parsing path. `CacheTests` covers cache hit / disabled / expiry.
 `RetryTests` covers the retry-once-on-transient-failure policy (URL errors,
 5xx retried; 4xx not). `GuiSmokeTests` builds the Tk root + `CowWeightApp`
-and destroys it, catching import/layout regressions in `gui.py` without an
-interactive display. The live Ollama network path is not exercised.
+and destroys it, catching import/layout regressions in `aif/gui.py` without
+an interactive display. The live Ollama network path is not exercised.
 
 Run a single test:
 
 ```powershell
-python -m unittest tests.test_app.EstimateApiTests.test_estimate_weight_with_image_url -v
+python -m unittest tests.test_estimator.OllamaEstimatorTests.test_cloud_endpoint_uses_bearer_token -v
 ```
 
 Lint with ruff (configured in `pyproject.toml`):
@@ -290,40 +290,52 @@ ruff check --fix .
 
 ```
 .
-├── app.py                       # HTTP API + CowWeightEstimator (the core)
-├── gui.py                       # Tkinter desktop app, reuses app.CowWeightEstimator
+├── aif/                         # The Python package
+│   ├── __init__.py             # Package exports (estimator, server, constants)
+│   ├── config.py               # Constants, defaults, .env loader
+│   ├── estimator.py            # CowWeightEstimator + image validation (the core)
+│   ├── server.py               # EstimateHandler + create_server (HTTP API)
+│   └── gui.py                  # Tkinter desktop app, reuses aif.estimator
+├── app.py                       # Thin wrapper: python app.py runs the HTTP API
+├── gui.py                       # Thin wrapper: python gui.py runs the GUI
 ├── start_gui.bat                # Double-click launcher (pythonw, no console window)
 ├── pyproject.toml               # Project metadata + ruff config
 ├── CONTRIBUTING.md             # Conventions + step-by-step guides for changes
 ├── .env.example                # Template for local config (committed)
 ├── .env                         # Local config (gitignored, not committed)
+├── cows/                        # Demo images for the GUI's "Test demo cows" button
 ├── tests/
-│   └── test_app.py               # HTTP + estimator + GUI smoke tests
+│   ├── test_server.py           # HTTP request/response suite (real sockets)
+│   ├── test_estimator.py        # Estimator unit tests (parsing, cache, retry)
+│   └── test_gui.py              # GUI smoke tests
 └── .github/workflows/
     └── build-windows.yml         # Release build: tests + PyInstaller .exe upload
 ```
 
----
-
 ## Architecture
 
-Two layers, both in `app.py`:
+Three layers, in the `aif` package:
 
-- **`CowWeightEstimator`** — the estimation logic, decoupled from HTTP.
-  `estimate()` dispatches on the configured backend.
-- **`EstimateHandler`** — a `BaseHTTPRequestHandler` subclass. Only
-  `POST /estimate-weight` is valid; anything else returns `404`. The estimator
-  is injected via `create_server(host, port, estimator=None)` and read off
-  `self.server.estimator` — no shared class attribute. Access and error logs
-  go through the `aif` logger.
+- **`CowWeightEstimator`** (`aif/estimator.py`) — the estimation logic,
+  decoupled from HTTP. `estimate()` dispatches on the configured backend.
+- **`EstimateHandler`** (`aif/server.py`) — a `BaseHTTPRequestHandler`
+  subclass. Only `POST /estimate-weight` is valid; anything else returns
+  `404`. The estimator is injected via `create_server(host, port,
+  estimator=None)` and read off `self.server.estimator` — no shared class
+  attribute. Access and error logs go through the `aif` logger.
+- **`CowWeightApp`** (`aif/gui.py`) — the Tkinter desktop app.
 
-The GUI (`gui.py`) does not start the HTTP server. It instantiates
+The GUI does not start the HTTP server. It instantiates
 `CowWeightEstimator` directly (with the backend/model selected in the UI) and
 runs the call on a background thread so the Tk event loop never blocks. Image
 preview uses Pillow if importable, otherwise degrades to showing the filename
 and byte size. Keyboard: `Enter` estimates (in the prompt box, use `Ctrl+Enter`
 to keep newlines free). A session-only history panel keeps the last 20
 estimates.
+
+`app.py` and `gui.py` at the repo root are thin wrappers so
+`python app.py` / `python gui.py` work unchanged; new code should import from
+the package (`from aif import CowWeightEstimator, create_server`).
 
 ---
 
