@@ -4,6 +4,9 @@ Estimate a cow's weight from a photo. Ships as a dependency-free Python HTTP
 API (`app.py`) and a Tkinter desktop app (`gui.py`). Standard library only —
 no `pip install` required to run.
 
+New here? Read [CONTRIBUTING.md](CONTRIBUTING.md) for conventions, the
+repository layout, and step-by-step guides for common changes.
+
 The default backend is **Ollama Cloud**, which sends the image to a vision
 model and extracts the weight from its reply. A deterministic offline fallback
 is included for testing and air-gapped use.
@@ -27,10 +30,32 @@ is included for testing and air-gapped use.
   including `data:` URIs. Strips WebP data-URI prefixes even when Windows labels
   them `application/octet-stream`.
 - **Structured errors.** Every error response carries a machine-readable `code`
-  field (`missing_image`, `estimation_failed`, …) alongside the human message.
+  field (`missing_image`, `invalid_image`, `estimation_failed`, …) alongside the
+  human message. Every response (success or error) also carries a `request_id`
+  (8-char hex) echoed in both the `x-request-id` header and the JSON body, and
+  flows through the `aif` logger so you can trace a request end to end.
+- **CORS-friendly.** All responses include `Access-Control-Allow-Origin: *`,
+  and `OPTIONS` preflight returns `204 No Content` — a browser page can call the
+  API directly.
+- **Smarter estimates.** The default prompt asks the model for a JSON object
+  with `weight_kg`, `confidence` (0–1), `breed`, and `body_condition_score`
+  (1–9). When the model returns JSON, those fields are added to the response;
+  when it doesn't, the estimator falls back to the existing `<n> kg` / first-
+  number text extraction. Both backends also return `estimated_weight_lbs`
+  alongside `estimated_weight_kg`.
+- **In-memory cache.** Repeated requests for the same image return instantly
+  from cache (keyed by `sha256` of the base64 image, TTL configurable via
+  `AIF_CACHE_TTL`, default 300 s, `0` disables).
+- **Retry with backoff.** Transient Ollama failures (5xx, network/timeout
+  errors) are retried once after a 1 s backoff. 4xx errors and unparseable
+  responses are not retried.
+- **Image validation.** Image bytes are checked against JPEG/PNG/GIF/BMP/WebP
+  magic bytes before being sent to the model; non-images are rejected with
+  `400 invalid_image` instead of wasting a model call.
 - **Tested.** Full HTTP request/response suite (real server on a background
   thread, not in-process calls) plus unit tests for weight extraction, backend
-  selection, bearer-token auth, and a GUI smoke test.
+  selection, bearer-token auth, structured-response parsing, caching, retry,
+  and a GUI smoke test.
 - **One-file Windows `.exe`.** A GitHub Actions workflow builds a standalone
   `CowWeightEstimator.exe` with PyInstaller on every published release.
 
@@ -75,6 +100,33 @@ Listens on `http://127.0.0.1:8080`. See [API reference](#api-reference).
 
 ## API reference
 
+### `GET /health`
+
+Liveness probe.
+
+```json
+{ "status": "ok", "backend": "ollama", "model": "gemma4:31b-cloud", "request_id": "bce5028c" }
+```
+
+### `GET /`
+
+Service info — name, version, and the list of endpoints.
+
+```json
+{
+  "name": "Cow Weight Estimator",
+  "version": "0.1.0",
+  "endpoints": ["POST /estimate-weight", "GET /health", "GET /"],
+  "request_id": "bce5028c"
+}
+```
+
+### `OPTIONS /estimate-weight` (and any path)
+
+CORS preflight. Returns `204 No Content` with
+`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: POST, GET, OPTIONS`,
+and `Access-Control-Allow-Headers: Content-Type`.
+
 ### `POST /estimate-weight`
 
 Estimate a cow's weight from an image. Send **either** `image_url` **or**
@@ -99,10 +151,15 @@ curl -s http://127.0.0.1:8080/estimate-weight \
 ```json
 {
   "estimated_weight_kg": 612.0,
+  "estimated_weight_lbs": 1349.2,
   "source": "ollama",
   "model": "gemma4:31b-cloud",
   "prompt_used": "Estimate this cow's weight in kg.",
-  "model_response": "This cow appears to weigh about 612 kg..."
+  "model_response": "{\"weight_kg\": 612, \"confidence\": 0.82, \"breed\": \"Angus\", \"body_condition_score\": 6}",
+  "confidence": 0.82,
+  "breed": "Angus",
+  "body_condition_score": 6.0,
+  "request_id": "bce5028c"
 }
 ```
 
@@ -119,10 +176,18 @@ curl -s http://127.0.0.1:8080/estimate-weight \
 | Field                  | Type    | Always present | Description                                                              |
 | ---------------------- | ------- | -------------- | ------------------------------------------------------------------------ |
 | `estimated_weight_kg`  | number  | yes            | The estimated weight in kilograms.                                       |
+| `estimated_weight_lbs` | number  | yes            | The estimated weight in pounds (`kg * 2.20462`, rounded to 1 dp).        |
 | `source`               | string  | yes            | `ollama` or `local_fallback`.                                            |
 | `model`                | string  | ollama only    | The model name used.                                                     |
-| `prompt_used`          | string  | yes            | The prompt actually sent (useful when the default was applied).         |
+| `prompt_used`          | string  | yes            | The prompt actually sent (useful when the default was applied).          |
 | `model_response`       | string  | yes            | Raw model text (empty string for the local fallback).                    |
+| `confidence`           | number  | ollama, JSON   | Model's confidence in the estimate (0–1). Present when the model returns the structured JSON. |
+| `breed`                | string  | ollama, JSON   | Model's breed guess. Present when the model returns the structured JSON. |
+| `body_condition_score` | number  | ollama, JSON   | 1–9 body condition score. Present when the model returns the structured JSON. |
+| `request_id`           | string  | yes            | 8-char hex id, also sent in the `x-request-id` response header.          |
+
+Every response (success or error) also includes the `Access-Control-Allow-Origin: *`
+CORS header.
 
 #### Status codes
 
@@ -130,12 +195,15 @@ curl -s http://127.0.0.1:8080/estimate-weight \
 | ------ | -------------------------------------------------------------------- |
 | `200`  | Success.                                                             |
 | `400`  | Bad request — missing image, invalid JSON, or no body.               |
-| `404`  | Unknown path (only `POST /estimate-weight` is served).               |
+| `400`  | Bad request — missing image, invalid JSON, no body, or non-image bytes (`invalid_image`). |
+| `404`  | Unknown path.                                                         |
 | `502`  | Estimator failure — backend unreachable, no key, or unparseable reply. |
 
 Every error response includes a machine-readable `code` field alongside the
 human `error` message: `missing_body`, `invalid_json`, `missing_image`,
-`not_found`, or `estimation_failed`. Any other method or path returns `404`.
+`invalid_image`, `not_found`, or `estimation_failed`. Every error response also
+includes the `request_id` (matching the `x-request-id` header). Any other path
+returns `404`.
 
 ---
 
@@ -152,6 +220,7 @@ server has started have no effect — restart to pick up new config.
 | `AIF_OLLAMA_URL`   | `https://ollama.com/api/generate` | ollama           | Ollama Cloud generate endpoint.                                            |
 | `AIF_AI_MODEL`     | `gemma4:31b-cloud`               | ollama           | Model name sent in the request.                                            |
 | `OLLAMA_API_KEY`   | _(none)_                         | ollama (cloud)   | Bearer token. Required when `AIF_OLLAMA_URL` points at `ollama.com`.       |
+| `AIF_CACHE_TTL`    | `300`                            | ollama           | In-memory cache TTL in seconds. `0` disables caching.                      |
 
 ### Setting up Ollama Cloud
 
@@ -188,14 +257,19 @@ python -m unittest discover -s tests -v
 
 The HTTP-level tests boot a real `create_server(port=0, estimator=...)` on a
 background thread and exercise it over real sockets (not in-process handler
-calls), so they validate status codes, JSON serialization, and the full request
-path. They force `backend="none"` to stay deterministic and avoid a running LLM.
-A 502 test forces `backend="ollama"` with no key and asserts
-`code == "estimation_failed"`. A separate `OllamaEstimatorTests` class covers
-weight extraction, data-URI stripping, backend selection, and bearer-token auth
-via `unittest.mock` — the live Ollama network path is not exercised.
-`GuiSmokeTests` builds the Tk root + `CowWeightApp` and destroys it, catching
-import/layout regressions in `gui.py` without an interactive display.
+calls), so they validate status codes, JSON serialization, CORS headers,
+request IDs, and the full request path. They force `backend="none"` to stay
+deterministic and avoid a running LLM. A 502 test forces `backend="ollama"`
+with no key and asserts `code == "estimation_failed"`; a 400 test forces
+`backend="ollama"` with a key but non-image bytes and asserts
+`code == "invalid_image"`. `OllamaEstimatorTests` covers weight extraction,
+data-URI stripping, image magic-byte validation, backend selection, and
+bearer-token auth via `unittest.mock`. `StructuredResponseTests` covers the
+JSON-vs-text parsing path. `CacheTests` covers cache hit / disabled / expiry.
+`RetryTests` covers the retry-once-on-transient-failure policy (URL errors,
+5xx retried; 4xx not). `GuiSmokeTests` builds the Tk root + `CowWeightApp`
+and destroys it, catching import/layout regressions in `gui.py` without an
+interactive display. The live Ollama network path is not exercised.
 
 Run a single test:
 
@@ -220,7 +294,8 @@ ruff check --fix .
 ├── gui.py                       # Tkinter desktop app, reuses app.CowWeightEstimator
 ├── start_gui.bat                # Double-click launcher (pythonw, no console window)
 ├── pyproject.toml               # Project metadata + ruff config
-├── .env.example                 # Template for local config (committed)
+├── CONTRIBUTING.md             # Conventions + step-by-step guides for changes
+├── .env.example                # Template for local config (committed)
 ├── .env                         # Local config (gitignored, not committed)
 ├── tests/
 │   └── test_app.py               # HTTP + estimator + GUI smoke tests
@@ -268,5 +343,16 @@ no Python installation needed on the target machine.
   `.env` (or env vars) and restart the server/GUI.
 - WebP uploads on Windows are handled even when the OS reports the image as
   `application/octet-stream`: any `data:<mime>;base64,` prefix is stripped.
-- Weight is extracted from model output by preferring an explicit
-  `<number> kg` (case-insensitive) and falling back to the first bare number.
+- Image bytes are validated against JPEG/PNG/GIF/BMP/WebP magic bytes before
+  being sent to the model; non-images are rejected with `400 invalid_image`.
+- Weight is extracted from model output by first looking for a JSON object
+  with a `weight_kg` field (the default prompt asks for this), and falling back
+  to an explicit `<number> kg` (case-insensitive), then the first bare number.
+- The in-memory cache is per-estimator. The HTTP server uses one long-lived
+  estimator, so repeat requests for the same image hit the cache; the GUI
+  builds a fresh estimator per request, so it does not share the cache. Set
+  `AIF_CACHE_TTL=0` to disable caching.
+- Transient Ollama failures (5xx, network/timeout errors) are retried once
+  after a 1 s backoff; 4xx errors and unparseable responses are not retried.
+- Every response includes a `request_id` (8-char hex) in the JSON body and the
+  `x-request-id` header, and the `aif` logger tags access/error lines with it.

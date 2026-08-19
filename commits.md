@@ -1,5 +1,66 @@
 # Commits
 
+## 2026-08-19 12:42 (session: API polish + smarter estimator)
+- **Bundle A — API polish (`app.py`):**
+  - Added `GET /health` → `{"status":"ok","backend","model","request_id"}` and
+    `GET /` / `/info` → `{"name","version","endpoints","request_id"}`. Unknown
+    GET paths return 404 `not_found`. New `do_GET` and `do_OPTIONS` handlers.
+  - Added `do_OPTIONS` CORS preflight → 204 with
+    `Access-Control-Allow-Origin: *`, `-Methods: POST, GET, OPTIONS`,
+    `-Headers: Content-Type`. `_send_json` now adds CORS headers to every
+    response (success + error).
+  - Added per-request `request_id` (8-char uuid hex) generated at the start of
+    each `do_*`. Sent as `x-request-id` response header and included in every
+    JSON body (success + error). `log_message` and `_error` tag logs with the
+    id so a request can be traced end to end.
+  - Added `estimated_weight_lbs = round(kg * 2.20462, 1)` to both backend
+    results (`_kg_to_lbs` helper, `KG_TO_LBS` constant).
+  - Added `ImageValidationError(ValueError)` and `_validate_image_bytes`:
+    `_to_base64_image` now decodes and checks JPEG/PNG/GIF/BMP/WebP magic bytes
+    (incl. RIFF….WEBP), raising `ImageValidationError` for non-images / empty /
+    invalid-base64. The handler catches `ImageValidationError` → 400
+    `code: "invalid_image"` (before the generic `ValueError`→502 path). The
+    API-key check still runs first, so the existing 502 no-key test stays green.
+- **Bundle B — Smarter estimator (`app.py`):**
+  - Rewrote `DEFAULT_PROMPT` to ask the model for a JSON object
+    `{weight_kg, confidence, breed, body_condition_score}`.
+  - Added `_parse_structured_response(text)`: regex-extracts the first `{...}`,
+    `json.loads` it, pulls `weight_kg` + optional `confidence`/`breed`/
+    `body_condition_score`; falls back to `_extract_weight_from_text` (`<n> kg`
+    then first bare number) when no usable JSON is present. Fully backward
+    compatible — the `"612 kg"` FakeResponse test still passes via fallback.
+  - Result now includes `confidence`/`breed`/`body_condition_score` when the
+    model returned JSON (absent otherwise).
+  - Added per-estimator in-memory cache keyed by `sha256(base64 image string)`,
+    TTL from `AIF_CACHE_TTL` (default 300 s, `0` disables). `_cache_get` returns
+    a shallow copy; `_cache_put` stores the full result incl. lbs + extras.
+  - Added `_call_ollama_with_retry`: retries once on 5xx `HTTPError`,
+    `URLError`, or `TimeoutError` after `OLLAMA_RETRY_BACKOFF` (1.0 s); 4xx and
+    `JSONDecodeError` are not retried. Retries logged at WARNING.
+- **GUI (`gui.py`):** `_show_result` and `_show_demo_result` now take the full
+  result dict and display `kg / lbs`, plus `breed` and `confidence` (as a
+  percentage) in the status line when the model returned them. Added
+  `_format_result_text` helper. No new widgets.
+- **Tests (`tests/test_app.py`):** added `_png_bytes()`/`_png_base64()`/
+  `_png_data_uri()` helpers (minimal real PNG that passes magic-byte
+  validation). Updated existing tests that sent non-image base64 to use the PNG
+  helper where the bytes must pass validation. Added tests for: lbs in
+  response, request_id in header+body (success and error), `GET /health`,
+  `GET /`, 404 on unknown GET, `OPTIONS` → 204, CORS header on success,
+  `invalid_image` 400 path, `_to_base64_image` rejection (non-image/empty/
+  invalid-base64) and acceptance (JPEG/WebP magic bytes), `_parse_structured_
+  response` (JSON+extras, partial extras, embedded-in-prose, no-JSON fallback,
+  no-weight fallback, non-numeric weight, array fallback), structured-response
+  end-to-end via mocked Ollama, cache hit/disabled/expiry, retry-on-URL-error-
+  then-succeed, no-retry-on-4xx, retry-on-5xx-then-raise. Suite is now 43 tests
+  (was 14). All pass.
+- **Docs:** updated `README.md` (highlights, new endpoints in API reference,
+  new response fields + `request_id`/CORS notes, `invalid_image` code, config
+  table with `AIF_CACHE_TTL`, expanded Testing + Notes sections), `AGENTS.md`
+  and `CLAUDE.md` (backend selection, architecture, tests sections), and
+  `.env.example` + local `.env` with `AIF_CACHE_TTL=300`.
+- `ruff check .` clean. `python -m unittest discover -s tests -v` → 43 passed.
+
 ## 2026-08-19 (session: docs for newcomers)
 - Added CONTRIBUTING.md with conventions, repository layout, commands,
   and step-by-step guides for common changes (new backend, new endpoint,
