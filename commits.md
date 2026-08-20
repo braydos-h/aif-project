@@ -602,3 +602,13 @@
 
 ## 2026-08-19 16:21 (session: README rewrite)
 - Rewrote README.md end-to-end (prose only): tightened the Highlights, Requirements, and Quick start sections, and reworded the API reference, Configuration, Testing, Architecture, Releases, and Notes sections into plainer prose. Kept all facts, examples, tables, and code blocks; no code changes.
+
+## 2026-08-19 16:30 — Add day-by-day portfolio development log
+- Expanded the project portfolio deck with dated slides covering every development day recorded in commits.md, including the major 19 August API, GUI/testing, Rust/Windows, and documentation work.
+
+## 2026-08-19 16:46 — Add day-by-day learning reflections
+- Added a concise “What I learned” point to every dated portfolio development slide, linked directly to the work completed that day.
+
+## 2026-08-19 16:27 — Make README friendly and add app screenshots
+- Reworked the README opening into a plain-English guide to the GUI, Ollama, Python/Tkinter, Rust, offline mode, and the main code files.
+- Added real desktop-app and completed offline-demo screenshots under `docs/images/`; no application code changed.
