@@ -49,13 +49,10 @@ VERSION = "0.1.0"
 
 
 def repo_root() -> str:
-    """Return the directory holding bundled data (``cows/``, bundled ``.env``).
+    """Return the repository/package-data root for Python callers.
 
-    In a normal checkout this is the repository root (the parent of the
-    ``aif`` package). Inside a PyInstaller onefile exe, ``__file__`` points
-    into the temporary extraction dir, so return ``sys._MEIPASS`` instead —
-    that is where bundled data lands. In a PyInstaller onedir exe the
-    ``__file__`` paths still work, so the real code path is preferred there.
+    Packaged Python launchers may provide ``sys._MEIPASS``; source checkouts
+    use the repository root (the parent of the ``aif`` package).
     """
     if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
         return sys._MEIPASS
@@ -63,10 +60,10 @@ def repo_root() -> str:
 
 
 def _env_candidates(filename: str) -> tuple[str, ...]:
-    """Locations probed for the ``.env`` file, in priority order.
+    """Locations probed for ``.env``, in priority order.
 
-    Next to the running exe (a PyInstaller build), then next to the aif
-    package (repo root / source tree), then inside a PyInstaller bundle.
+    Prefer the directory next to a packaged executable, then the source-tree
+    repository root.
     """
     executable_dir = os.path.dirname(os.path.abspath(sys.executable))
     return (os.path.join(executable_dir, filename), os.path.join(repo_root(), filename))

@@ -1,10 +1,8 @@
 """The estimation core: backend-agnostic cow weight estimation.
 
-``CowWeightEstimator`` dispatches ``estimate()`` to the configured backend
-(see "How to add a new backend" below). It is decoupled from HTTP and the
-GUI — the desktop app (``aif.gui``) uses this module in-process; the HTTP
-API is served by the Rust backend (``backend/``, crate ``aif-backend``),
-which mirrors this logic and must stay behaviorally identical.
+``CowWeightEstimator`` dispatches ``estimate()`` to the configured backend.
+It is decoupled from HTTP and the WebUI, so Python scripts can still use the
+same estimator directly while the Rust backend serves browser/API requests.
 """
 
 import base64
@@ -61,7 +59,7 @@ def _validate_image_bytes(image_bytes: bytes) -> None:
 class CowWeightEstimator:
     """Estimate a cow's weight from an image reference.
 
-    Decoupled from HTTP: the GUI uses this class in-process (the HTTP API
+    Decoupled from HTTP: callers can use this class in-process (the HTTP API
     lives in the Rust backend, ``backend/``). Configuration comes from
     constructor arguments that fall back to environment variables / the
     ``.env`` file, which are read once at import time — changing env vars

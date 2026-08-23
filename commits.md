@@ -612,3 +612,26 @@
 ## 2026-08-19 16:27 — Make README friendly and add app screenshots
 - Reworked the README opening into a plain-English guide to the GUI, Ollama, Python/Tkinter, Rust, offline mode, and the main code files.
 - Added real desktop-app and completed offline-demo screenshots under `docs/images/`; no application code changed.
+
+## 2026-08-21 14:10 — AT2 Progress Check Part 1 draft
+- Created `AT2 Progress Check Part 1 - Draft.docx` with a 751-word Part 1 response covering PA2, PA3 and A2.
+- Grounded the reflection in the assessment prompts, README, commits.md and AT1 portfolio evidence, including Ollama research, iterative testing, Cayden's feedback, and the remaining calibration/depth work.
+- Completed structural QA; visual render QA was unavailable because LibreOffice is not installed on this machine.
+
+## 2026-08-21 14:16 — Prepare AT2 Progress Check Part 1 submission
+- Copied the verified Part 1 response to `C:/Users/BH/Downloads/AT2 Progress Check Part 1 - Brayden Habets.docx` for submission.
+- Confirmed the response is about 750 words and follows the PA2, PA3 and A2 section ranges.
+- Re-ran accessibility and structural document checks; visual render QA remains unavailable because LibreOffice is not installed.
+
+## 2026-08-23 12:14 +09:30 — Replace Tkinter GUI with Rust-served WebUI
+- Replaced the primary Tkinter desktop UI with a responsive dependency-free WebUI in `web/index.html`, `web/styles.css`, and `web/app.js`, including image drag/drop, previews, advanced settings, loading/error states, copy/retry, session history, health status, and bundled demo-cow runs.
+- Extended the Rust server with compile-time static/demo routes, safe `/info` configuration metadata, per-request backend/model/URL/API-key overrides, option validation, CSP/security headers, API-key redaction, and configuration-aware Ollama cache keys.
+- Retired `aif/gui.py`, converted `gui.py` into a browser-opening compatibility launcher, removed PyInstaller desktop build files, updated Windows launch/build scripts and documentation, and added WebUI/server/launcher coverage.
+- Verified GNU-toolchain Rust tests (25 passed), release build, Python tests (58 passed), `ruff check .`, `node --check web/app.js`, Rust formatting for changed modules, and `git diff --check`. The default MSVC Rust toolchain remains unavailable locally because `link.exe` is not installed.
+
+## 2026-08-23 12:14 +09:30 — Add runtime URL validation coverage
+- Added an HTTP regression test proving invalid per-request Ollama URLs return `400 invalid_options`.
+- Re-ran the final checks: 25 Rust tests and 59 Python tests passed, plus release build, ruff, JavaScript syntax check, and diff validation.
+
+## 2026-08-23 12:14 +09:30 — Remove obsolete desktop screenshots
+- Removed the unreferenced Tkinter desktop screenshots from `docs/images/` after replacing the documented UI with the browser application.

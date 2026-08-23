@@ -1,12 +1,12 @@
 [project]
 name = "aif-project"
 version = "0.1.0"
-description = "Minimal API service and Windows desktop app for estimating cow weight from an image."
+description = "Rust-served WebUI and API for estimating cow weight from an image."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Brayden Habets" }]
 license = { text = "MIT" }
-keywords = ["cow", "weight", "estimation", "ollama", "tkinter"]
+keywords = ["cow", "weight", "estimation", "ollama", "webui"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -16,8 +16,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["ruff", "pyinstaller", "coverage"]
-gui = ["pillow"]
+dev = ["ruff", "coverage"]
 
 [project.urls]
 Homepage = "https://github.com/anomalyco/aif-project"

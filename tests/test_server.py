@@ -1,10 +1,9 @@
 """HTTP test suite against the Rust backend binary.
 
-The Python HTTP server was replaced by ``aif-backend`` (see ``backend/``).
 These tests spawn the compiled binary on a free port, hit it over real
-sockets, and assert the same API contract the old ``EstimateApiTests``
-covered: status codes, JSON serialization, CORS headers, request IDs, error
-codes, and the full request path.
+sockets, and cover the WebUI/static routes plus the API contract: status
+codes, content types, JSON serialization, CORS headers, request IDs, error
+codes, runtime overrides, and security boundaries.
 
 The binary must be built first:
     cargo build --release --manifest-path backend/Cargo.toml
@@ -135,6 +134,11 @@ class EstimateApiTests(unittest.TestCase):
             body = response.read().decode("utf-8")
             return response.status, json.loads(body), response.headers
 
+    def get_raw(self, path):
+        request = urllib.request.Request(f"{self.server.base_url}{path}", method="GET")
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, response.read(), response.headers
+
     def test_estimate_weight_with_image_url(self):
         status, body, _ = self.post(
             {"image_url": "https://example.com/cow.jpg", "prompt": "Estimate in kg"}
@@ -164,6 +168,23 @@ class EstimateApiTests(unittest.TestCase):
         rid = headers["x-request-id"]
         self.assertEqual(len(rid), 8)
         self.assertEqual(body["request_id"], rid)
+
+    def test_root_serves_web_ui_html(self):
+        status, body, headers = self.get_raw("/")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers["Content-Type"])
+        self.assertIn(b"Cow Weight Estimator", body)
+
+    def test_static_assets_have_content_types(self):
+        status, css, headers = self.get_raw("/styles.css")
+        self.assertEqual(status, 200)
+        self.assertIn("text/css", headers["Content-Type"])
+        self.assertIn(b"prefers-color-scheme", css)
+
+        status, javascript, headers = self.get_raw("/app.js")
+        self.assertEqual(status, 200)
+        self.assertIn("javascript", headers["Content-Type"])
+        self.assertIn(b"estimate-weight", javascript)
 
     def test_error_response_has_request_id(self):
         data = json.dumps({"prompt": "Estimate in kg"}).encode("utf-8")
@@ -259,6 +280,7 @@ class EstimateApiTests(unittest.TestCase):
             self.assertEqual(context.exception.code, 400)
             error = json.loads(context.exception.read().decode("utf-8"))
             self.assertEqual(error["code"], "invalid_image")
+            self.assertNotIn("test-key", json.dumps(error))
         finally:
             server.close()
 
@@ -270,13 +292,79 @@ class EstimateApiTests(unittest.TestCase):
         self.assertIn("model", body)
         self.assertIn("request_id", body)
 
-    def test_root_info_endpoint(self):
-        status, body, _ = self.get("/")
+    def test_info_endpoint_remains_json_and_has_safe_defaults(self):
+        status, body, headers = self.get("/info")
         self.assertEqual(status, 200)
+        self.assertIn("application/json", headers["Content-Type"])
         self.assertEqual(body["name"], "Cow Weight Estimator")
         self.assertIn("version", body)
         self.assertIn("endpoints", body)
         self.assertIn("POST /estimate-weight", body["endpoints"])
+        self.assertIn("default_prompt", body)
+        self.assertIn("ollama_url", body)
+        self.assertNotIn("ollama_api_key", body)
+
+    def test_info_never_exposes_api_key(self):
+        secret = "super-secret-test-key"
+        server = RustBackendServer({"AIF_AI_BACKEND": "none", "OLLAMA_API_KEY": secret})
+        try:
+            _, body, _ = self.get_from(server, "/info")
+            self.assertTrue(body["ollama_configured"])
+            self.assertNotIn(secret, json.dumps(body))
+        finally:
+            server.close()
+
+    def get_from(self, server, path):
+        request = urllib.request.Request(f"{server.base_url}{path}", method="GET")
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.loads(response.read().decode("utf-8")), response.headers
+
+    def test_request_level_configuration_overrides_are_optional(self):
+        secret = "request-only-secret"
+        status, body, _ = self.post(
+            {
+                "image_base64": _png_base64(),
+                "prompt": "Return a short JSON estimate.",
+                "backend": "none",
+                "model": "runtime-model",
+                "ollama_url": "https://example.com/api/generate",
+                "ollama_api_key": secret,
+            }
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["source"], "local_fallback")
+        self.assertEqual(body["prompt_used"], "Return a short JSON estimate.")
+        self.assertNotIn(secret, json.dumps(body))
+
+    def test_unsupported_runtime_backend_is_rejected(self):
+        data = json.dumps({"image_base64": _png_base64(), "backend": "unknown"}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.server.base_url}/estimate-weight",
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(context.exception.code, 400)
+        error = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(error["code"], "invalid_options")
+
+    def test_invalid_runtime_ollama_url_is_rejected(self):
+        data = json.dumps(
+            {"image_base64": _png_base64(), "backend": "none", "ollama_url": "file:///secret"}
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.server.base_url}/estimate-weight",
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(context.exception.code, 400)
+        error = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(error["code"], "invalid_options")
 
     def test_unknown_get_returns_404(self):
         request = urllib.request.Request(f"{self.server.base_url}/nope", method="GET")
@@ -285,6 +373,23 @@ class EstimateApiTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 404)
         error = json.loads(context.exception.read().decode("utf-8"))
         self.assertEqual(error["code"], "not_found")
+
+    def test_path_traversal_attempt_is_not_served(self):
+        request = urllib.request.Request(
+            f"{self.server.base_url}/%2e%2e/%2e%2e/Cargo.toml", method="GET"
+        )
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(context.exception.code, 404)
+
+    def test_demo_routes_are_controlled(self):
+        status, body, _ = self.get("/demo-cows")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["demos"]), 3)
+        status, image, headers = self.get_raw("/demo-cows/1")
+        self.assertEqual(status, 200)
+        self.assertIn("image/webp", headers["Content-Type"])
+        self.assertTrue(image.startswith(b"RIFF"))
 
     def test_options_preflight_returns_204(self):
         request = urllib.request.Request(

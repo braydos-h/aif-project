@@ -63,9 +63,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host 'Backend built.'
 
-$guiPath = Join-Path $PSScriptRoot 'gui.py'
-if (-not (Test-Path -LiteralPath $guiPath)) {
-    Write-Host 'Warning: gui.py not found next to the script; skipping the desktop shortcut.'
+$launcherPath = Join-Path $PSScriptRoot 'start_gui.ps1'
+if (-not (Test-Path -LiteralPath $launcherPath)) {
+    Write-Host 'Warning: WebUI launcher not found; skipping the desktop shortcut.'
     Read-Host -Prompt 'Press Enter to exit'
     exit 0
 }
@@ -73,17 +73,15 @@ if (-not (Test-Path -LiteralPath $guiPath)) {
 $shortcutDir = [Environment]::GetFolderPath('Desktop')
 if (-not (Test-Path -LiteralPath $shortcutDir)) { $shortcutDir = $PSScriptRoot }
 $shortcutPath = Join-Path $shortcutDir 'Cow Weight Estimator.lnk'
-$launcher = Join-Path $PSScriptRoot 'start_gui.ps1'
-
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = 'powershell.exe'
-$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`""
+$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`""
 $shortcut.WorkingDirectory = $PSScriptRoot
 $shortcut.IconLocation = 'powershell.exe,0'
 $shortcut.Description = 'Cow Weight Estimator'
 $shortcut.Save()
 Write-Host "Desktop shortcut created: $shortcutPath"
 
-Write-Host 'Setup complete. Double-click the shortcut to launch the app.'
+Write-Host 'Setup complete. Double-click the shortcut to launch the WebUI.'
 Read-Host -Prompt 'Press Enter to exit'

@@ -9,11 +9,11 @@
 
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
+use crate::config::Config;
 use crate::config::OLLAMA_MAX_RETRIES;
 use crate::config::OLLAMA_RETRY_BACKOFF_SECS;
-use crate::config::Config;
 use crate::fallback::result_with_extras;
 use crate::parse::parse_structured_response;
 use crate::validate::to_base64_image;
@@ -49,7 +49,9 @@ pub fn estimate_via_ollama(
     }
 
     let image_b64 = to_base64_image(image_reference)?;
-    let cache_key = sha256_hex(image_b64.as_bytes());
+    // Runtime prompt/model/URL overrides must not reuse a result produced by
+    // a different request configuration.
+    let cache_key = cache_key(&image_b64, &config.model, &config.ollama_url, prompt);
     if let Some(cached) = cache.get(&cache_key) {
         eprintln!("cache hit for image {}", &cache_key[..12]);
         return Ok(cached);
@@ -79,7 +81,10 @@ pub fn estimate_via_ollama(
                 let body = match response.into_string() {
                     Ok(b) => b,
                     Err(e) => {
-                        last_error = Some(OllamaError(format!("Failed to read Ollama response: {}", e)));
+                        last_error = Some(OllamaError(format!(
+                            "Failed to read Ollama response: {}",
+                            e
+                        )));
                         if attempt == OLLAMA_MAX_RETRIES {
                             return Err(Box::new(last_error.unwrap()));
                         }
@@ -221,9 +226,20 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
+fn cache_key(image_b64: &str, model: &str, url: &str, prompt: &str) -> String {
+    let mut input = String::new();
+    for value in [image_b64, model, url, prompt] {
+        input.push_str(value);
+        input.push('\0');
+    }
+    sha256_hex(input.as_bytes())
+}
+
 /// Parse the hostname out of a URL string.
 fn url_host(url: &str) -> Option<String> {
-    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
     let host = rest.split(['/', ':', '?']).next().unwrap_or(rest);
     if host.is_empty() {
         None
@@ -240,6 +256,15 @@ mod tests {
     fn sha256_matches_known_digest() {
         // sha256("abc") == ba7816bf...
         assert!(sha256_hex(b"abc").starts_with("ba7816bf8f01cfea414140de5dae2223"));
+    }
+
+    #[test]
+    fn cache_key_includes_request_configuration() {
+        let first = cache_key("image", "model-a", "https://example.com", "prompt-a");
+        let second = cache_key("image", "model-b", "https://example.com", "prompt-a");
+        let third = cache_key("image", "model-a", "https://example.com", "prompt-b");
+        assert_ne!(first, second);
+        assert_ne!(first, third);
     }
 
     #[test]
@@ -266,7 +291,10 @@ mod tests {
 
     #[test]
     fn error_detail_prefers_error_field() {
-        assert_eq!(error_detail(r#"{"error": "bad key"}"#).as_deref(), Some("bad key"));
+        assert_eq!(
+            error_detail(r#"{"error": "bad key"}"#).as_deref(),
+            Some("bad key")
+        );
         assert_eq!(error_detail("raw text"), None);
     }
 

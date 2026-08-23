@@ -1,88 +1,89 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
-After every session add to the commits.md file with stuff you have done and the date and time when you finished working.
-**Rule: whenever an agent adds or changes code, it MUST append a new entry to `commits.md` (with date and time). Only append — never overwrite, rewrite, or delete existing entries in `commits.md`.**
-For conventions, repository layout, and step-by-step guides for common changes (new backend, new endpoint, GUI work), read [CONTRIBUTING.md](CONTRIBUTING.md).
+This file provides guidance to Codex working in this repository.
+
+After every session, append a dated summary to `commits.md`. Whenever an
+agent adds or changes code, it **must append** a new entry with the date and
+time. Only append; never overwrite, rewrite, or delete existing entries.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and common changes.
+
 ## What this is
 
-A project that estimates a cow's weight from an image payload, shipped as a Rust HTTP service (`backend/`, crate `aif-backend`) and a Python Tkinter desktop GUI (`aif/gui.py`). The Python package (`aif/`) is GUI + estimator only — the HTTP server is Rust. The Python side is stdlib-only (`urllib`, `hashlib`, `base64`, `re`, `logging`, `tkinter`); the Rust side has three dependencies (`ureq` with rustls TLS, `serde_json`, `sha2`) — no async runtime. Configuration is loaded from a `.env` file at startup via a stdlib-only loader (`aif/config.py:_load_env_file`); environment variables already set take precedence over `.env`. Project metadata and the ruff config live in `pyproject.toml`. `app.py` at the repo root is a thin backward-compatible launcher that spawns the Rust binary (override the path with `AIF_BACKEND_BIN`), so `python app.py` keeps working; `gui.py` stays a Python wrapper over `aif.gui`.
+Cow Weight Estimator is a Rust HTTP server that also serves a static browser
+WebUI. The Python package is a reusable, dependency-free estimator/config
+library and is not the application UI. `app.py` starts the Rust binary;
+`gui.py` is a compatibility launcher that opens the same WebUI.
 
-Module layout:
+Important paths:
 
-- `aif/config.py` — constants, defaults, `.env` loader (`_load_env_file`), `setup_logging`.
-- `aif/estimator.py` — `CowWeightEstimator`, `ImageValidationError`, image validation helpers (used in-process by the GUI only).
-- `aif/gui.py` — `CowWeightApp` (Tkinter).
-- `backend/src/config.rs` — .env loader, defaults, env-var precedence.
-- `backend/src/validate.rs` — base64 decoding + image magic-byte validation.
-- `backend/src/parse.rs` — structured-JSON-first / free-text weight extraction.
-- `backend/src/fallback.rs` — deterministic SHA-256-derived estimate (parity with Python).
-- `backend/src/cache.rs` — in-memory TTL result cache.
-- `backend/src/ollama.rs` — Ollama Cloud client: bearer auth, retry-once-on-5xx/network, no-retry-on-4xx.
-- `backend/src/http.rs` — hand-rolled threaded HTTP/1.1 server (`POST /estimate-weight`, `GET /health`, `GET /`, `GET /info`, `OPTIONS`).
-- `backend/src/main.rs` — entry point (`--host`, `--port`; `--port 0` prints the bound port).
+- `web/index.html`, `web/styles.css`, `web/app.js` — browser UI.
+- `backend/src/http.rs` — threaded HTTP/1.1 server, explicit static/demo
+  routes, API dispatch, runtime option validation, and error responses.
+- `backend/src/config.rs` — defaults, `.env` loading, and server config.
+- `backend/src/validate.rs` — base64/data-URI and image magic-byte validation.
+- `backend/src/parse.rs` — structured JSON and free-text weight parsing.
+- `backend/src/fallback.rs` — deterministic SHA-256-derived offline estimate.
+- `backend/src/cache.rs` — in-memory TTL cache.
+- `backend/src/ollama.rs` — Ollama client, bearer auth, and retry policy.
+- `aif/estimator.py` — reusable Python estimator and image helpers.
+- `aif/config.py` — Python defaults and stdlib `.env` loader.
+- `tests/test_server.py` — real HTTP tests against the Rust binary.
 
-## Backend selection
+## Backend behavior
 
-Both the GUI estimator and the Rust server pick a backend (constructor arg / env / `AIF_AI_BACKEND`, default `ollama`):
-- **`ollama`** (default) — POSTs to Ollama Cloud (`AIF_OLLAMA_URL`, default `https://ollama.com/api/generate`) with the `OLLAMA_API_KEY` bearer token and model `AIF_AI_MODEL` (default `gemma4:31b-cloud` — the direct-cloud tag; the local-runtime tag `gemma4:31b` is a 20GB download and will not work against the cloud endpoint), sending the image as base64 and a text prompt. The default `DEFAULT_PROMPT` asks the model for a JSON object `{weight_kg, confidence, breed, body_condition_score}`; the parser extracts the JSON when present (and falls back to `<n> kg` / first-bare-number text extraction when not). The result includes `estimated_weight_kg`, `estimated_weight_lbs`, `source == "ollama"`, the full `model_response`, and `confidence`/`breed`/`body_condition_score` when the model returned JSON. Results are cached keyed by `sha256(base64 image)` with TTL `AIF_CACHE_TTL` (default 300 s, `0` disables). Transient failures (5xx, network/timeout errors) are retried once after `OLLAMA_RETRY_BACKOFF` (1.0 s); 4xx and non-JSON bodies are not retried. Image bytes are validated against JPEG/PNG/GIF/BMP/WebP magic bytes before being sent to the model, rejected as non-images otherwise.
-- **`none`** — deterministic local estimate derived from `sha256(image_reference)` → range 250–900 kg (Rust: `u32::from_be_bytes(digest[..4]) / u32::MAX`, matching Python's `int(hexdigest[:8], 16) / 0xFFFFFFFF`). Stable for a given input, which tests rely on. Reports `source == "local_fallback"` and an empty `model_response`. Also includes `estimated_weight_lbs`.
+The supported backends are `ollama` and `none`. Ollama uses
+`AIF_OLLAMA_URL`, `AIF_AI_MODEL`, and `OLLAMA_API_KEY`; the default model is
+`gemma4:31b-cloud`. The `none` backend returns a deterministic 250–900 kg
+placeholder with `source == "local_fallback"` and performs no network call.
+Rust and Python fallback math must remain behaviorally identical.
 
-When both exist, the Rust and Python implementations of the same logic must stay behaviorally identical (parity tests exist for the `none` backend's math).
+The server routes are:
+
+- `GET /` → WebUI HTML.
+- `GET /styles.css`, `GET /app.js` → compile-time static assets.
+- `GET /info` → safe application/configuration JSON; never return an API key.
+- `GET /health` → liveness, backend, model, and safe configuration status.
+- `GET /demo-cows`, `GET /demo-cows/{id}` → controlled bundled demo images.
+- `POST /estimate-weight` → existing estimator API.
+- `OPTIONS` → CORS preflight; unknown routes return structured 404 JSON.
+
+Static and demo routes are explicit. Never add arbitrary filesystem serving or
+build a filesystem path from a URL segment. Keep the existing body limit,
+image validation, request IDs, CORS headers, meaningful error codes, and
+header-safe responses.
+
+The estimate request accepts the existing `image_url`, `image_base64`, and
+`prompt` fields plus optional `backend`, `model`, `ollama_url`, and
+`ollama_api_key`. Optional values must be type/size/allow-list validated. Use
+a cloned request-specific `Config`; never mutate process environment variables
+or shared server state. Never log API keys or return them in errors/info.
 
 ## Commands
 
-Build the Rust server, then run it (listens on `127.0.0.1:8080`; `python app.py` spawns the binary):
 ```bash
 cargo build --release --manifest-path backend/Cargo.toml
 python app.py
 ```
 
-Run the GUI:
-```bash
-python gui.py
-```
+Then visit `http://127.0.0.1:8080/`.
 
-Run Rust tests:
 ```bash
 cargo test --manifest-path backend/Cargo.toml
-```
-
-Run the full test suite (the HTTP tests spawn the release binary — build it first):
-```bash
 python -m unittest discover -s tests -v
-```
-
-Run a single test:
-```bash
-python -m unittest tests.test_estimator.OllamaEstimatorTests.test_cloud_endpoint_uses_bearer_token -v
-```
-
-Lint with ruff (configured in `pyproject.toml`):
-```bash
 ruff check .
-ruff check --fix .
 ```
 
-## Architecture
+The Python HTTP tests require the release backend binary first and honor
+`AIF_BACKEND_BIN`.
 
-The core has two layers:
+## Testing/security expectations
 
-- **`CowWeightEstimator`** (`aif/estimator.py`) — the GUI's estimation logic, decoupled from HTTP. `estimate()` dispatches on the configured backend (see "Backend selection" above): `ollama` (default) or `none`. Returns a dict including `estimated_weight_kg`, `estimated_weight_lbs`, `source`, `prompt_used`, and `model_response` (raw model text, empty for the fallback), plus `confidence`/`breed`/`body_condition_score` when the model returned JSON.
+Dynamic browser values, including model output, filenames, errors, and request
+IDs, must be rendered with `textContent`/DOM properties, never `innerHTML`.
+Do not persist API keys or base64 images in browser storage/history. Keep
+keyboard behavior scoped to the prompt (`Ctrl+Enter` estimates; plain Enter
+creates a newline), preserve focus states/live status messages, and keep the
+UI usable on mobile and dark mode.
 
-- **Rust `aif-backend`** (`backend/`) — replaces the old `aif/server.py` HTTP API. A hand-rolled HTTP/1.1 server on `std::net::TcpListener` with one thread per connection, so slow Ollama requests never block each other (the old Python `http.server` was single-threaded). Valid routes: `POST /estimate-weight`, `GET /health` (liveness: status/backend/model/request_id), `GET /` or `/info` (name/version/endpoints), `OPTIONS` (CORS preflight → 204); anything else returns 404. The POST handler accepts `image_url` **or** `image_base64` plus an optional `prompt` (defaults to `DEFAULT_PROMPT`). `ImageValidationError` surfaces as `400 invalid_image`; other estimator errors surface as `502 Bad Gateway`; bad input as `400`. Every error response carries a machine-readable `code` field (`missing_body`, `invalid_json`, `missing_image`, `invalid_image`, `not_found`, `estimation_failed`) alongside the human `error` message. Every response (success or error) includes a per-request `request_id` (8-hex) in the JSON body and the `x-request-id` header, and CORS headers (`Access-Control-Allow-Origin: *`). Requests are read as a single Content-Length-delimited body (no keep-alive, no chunked encoding — intentional). Logs go to stderr, tagged with the request id.
-
-The Rust binary is launched by `app.py` (`find_binary`; override with `AIF_BACKEND_BIN`); flags are `--host` and `--port` (`--port 0` prints the bound port to stdout, used by the test suite). The GUI does not use the Rust server — it constructs a fresh `CowWeightEstimator` per request from the UI's backend/model/URL fields.
-
-`aif/gui.py` is a Tkinter desktop app (`CowWeightApp`) that lets the user pick an image file, edit the prompt, switch backend/model at runtime, and view the weight, the model's full reply, and a session history. Image preview uses Pillow if importable, otherwise degrades to showing the filename and byte size. Keyboard: `Enter` estimates (in the prompt box, use `Ctrl+Enter` to keep newlines free). The `cows/` folder holds demo images used by the "Test demo cows" button.
-
-## Tests
-
-Tests live in `tests/` (Python) and `backend/src/` (Rust `#[cfg(test)]` units), split by concern:
-
-- `tests/test_server.py` spawns the compiled Rust binary on a free port (env `AIF_BACKEND_BIN` overrides the path) and exercises it over real HTTP, so it validates the full request/response path including status codes and JSON serialization. The HTTP tests force `backend="none"` so they use the deterministic fallback (no running Ollama needed) and assert `source == "local_fallback"`. A 502 test forces `backend="ollama"` with no key and asserts `code == "estimation_failed"`; a 400 test forces `backend="ollama"` with a key but non-image bytes and asserts `code == "invalid_image"`. Other HTTP tests cover `GET /health`, `GET /`, 404 on unknown GET, `OPTIONS` preflight → 204, CORS header on success, `request_id` in header+body, and concurrent requests.
-- `tests/test_estimator.py` unit-tests the Python estimator: the Ollama-specific helpers (`_extract_weight_from_text`, `_to_base64_image` incl. magic-byte validation, `_parse_structured_response`), backend selection logic, `CacheTests` (cache hit/disabled/expiry), and `RetryTests` (retry-on-URL-error-then-succeed, no-retry-on-4xx, retry-on-5xx-then-raise). The live Ollama network path is not exercised.
-- Rust unit tests live next to each module in `backend/src/` (config parsing, base64/magic-byte validation, structured/text weight parsing, fallback determinism, cache hit/disabled/expiry, retry details).
-- `tests/test_gui.py` has `GuiSmokeTests`, which builds the Tk root + `CowWeightApp` and destroys it, catching import/layout regressions in `aif/gui.py` without an interactive display, plus an import check for the `gui.py` entry wrapper.
-
-Tests use a minimal real PNG (`_png_bytes()`) for any input that must pass image validation. When mocking module-level names, patch `aif.estimator.logger` (not the root `aif` logger).
+Append the session summary to `commits.md` before finishing.

@@ -2,8 +2,8 @@
 setlocal
 cd /d "%~dp0"
 
-if not exist "gui.py" (
-    echo Error: gui.py not found in "%~dp0"
+if not exist "app.py" (
+    echo Error: app.py not found in "%~dp0"
     echo Make sure the batch file stays next to the project files.
     pause
     exit /b 1
@@ -12,14 +12,14 @@ if not exist "gui.py" (
 set "PYTHONW="
 for %%P in (pythonw.exe) do set "PYTHONW=%%~$PATH:P"
 if defined PYTHONW (
-    start "Cow Weight Estimator" "%PYTHONW%" "%~dp0gui.py"
+    start "Cow Weight Estimator WebUI" "%PYTHONW%" "%~dp0gui.py"
     exit /b 0
 )
 
 set "PYTHON="
 for %%P in (python.exe) do set "PYTHON=%%~$PATH:P"
 if defined PYTHON (
-    start "Cow Weight Estimator" "%PYTHON%" "%~dp0gui.py"
+    start "Cow Weight Estimator WebUI" "%PYTHON%" "%~dp0gui.py"
     exit /b 0
 )
 

@@ -29,24 +29,17 @@ jobs:
       - name: Build Rust backend (release)
         run: cargo build --release --manifest-path backend/Cargo.toml
 
-      - name: Install PyInstaller
-        run: pip install pyinstaller
-
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
-      - name: Build Windows executable
-        run: pyinstaller --noconfirm CowWeightEstimator.spec
-
-      - name: Upload executables to release
+      - name: Upload backend to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/CowWeightEstimator.exe
             backend/target/release/aif-backend.exe
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CowWeightEstimator-windows
-          path: dist/CowWeightEstimator.exe
+          name: CowWeightEstimator-backend-windows
+          path: backend/target/release/aif-backend.exe

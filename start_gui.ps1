@@ -1,9 +1,10 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 
+$appPath = Join-Path $PSScriptRoot 'app.py'
 $guiPath = Join-Path $PSScriptRoot 'gui.py'
-if (-not (Test-Path -LiteralPath $guiPath)) {
-    Write-Host "Error: gui.py not found in `"$PSScriptRoot`""
+if (-not (Test-Path -LiteralPath $appPath) -or -not (Test-Path -LiteralPath $guiPath)) {
+    Write-Host "Error: WebUI launcher files not found in `"$PSScriptRoot`""
     Write-Host 'Make sure the script stays next to the project files.'
     Read-Host -Prompt 'Press Enter to exit'
     exit 1
@@ -11,13 +12,13 @@ if (-not (Test-Path -LiteralPath $guiPath)) {
 
 $pythonw = Get-Command pythonw.exe -ErrorAction SilentlyContinue
 if ($pythonw) {
-    Start-Process -FilePath $pythonw.Source -ArgumentList $guiPath
+    Start-Process -FilePath $pythonw.Source -ArgumentList "`"$guiPath`""
     exit 0
 }
 
 $python = Get-Command python.exe -ErrorAction SilentlyContinue
 if ($python) {
-    Start-Process -FilePath $python.Source -ArgumentList $guiPath
+    Start-Process -FilePath $python.Source -ArgumentList "`"$guiPath`""
     exit 0
 }
 

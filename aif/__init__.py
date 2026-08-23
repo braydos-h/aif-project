@@ -1,16 +1,8 @@
-"""Cow Weight Estimator — estimate a cow's weight from an image.
+"""Reusable Python configuration and estimation helpers.
 
-A dependency-free package split into focused modules:
-
-- ``aif.config`` — constants, defaults, and the stdlib-only ``.env`` loader.
-- ``aif.estimator`` — ``CowWeightEstimator`` (backend-agnostic estimation,
-  used in-process by the desktop GUI).
-- ``aif.gui`` — Tkinter desktop app (``CowWeightApp``).
-
-The HTTP API now runs on the Rust backend in ``backend/`` (``aif-backend``);
-``app.py`` at the repository root launches that binary. Entry points
-``app.py`` and ``gui.py`` are thin wrappers so ``python app.py`` and
-``python gui.py`` keep working unchanged.
+The browser application and HTTP API run in the Rust backend. The Python
+package remains available for scripts and tests that need the estimator
+directly, while ``app.py`` launches the Rust-served WebUI.
 """
 
 from .config import (

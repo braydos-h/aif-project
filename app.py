@@ -1,9 +1,8 @@
-"""Entry point for the HTTP API server.
+"""Launcher for the Rust backend and its same-origin WebUI.
 
-``python app.py`` launches the Rust backend (``backend/``, crate
-``aif-backend``) which serves the same API the Python server used to: a
-threaded HTTP/1.1 server with per-request parallelism. If the release binary
-is missing, prints build instructions and exits.
+``python app.py`` starts the compiled ``aif-backend`` binary. The Rust server
+serves both the browser application and the JSON API; this module never runs
+a second web server.
 
 Env var ``AIF_BACKEND_BIN`` overrides the binary path (useful for tests and
 CI). Default is ``backend/target/release/aif-backend(.exe)`` relative to
@@ -40,17 +39,24 @@ def find_binary() -> str:
     )
 
 
-def main() -> None:
-    """Start the Rust HTTP API server on 127.0.0.1:8080."""
+def main(open_browser: bool = False) -> None:
+    """Start the Rust WebUI/API server on 127.0.0.1:8080.
+
+    Args:
+        open_browser: Open the local WebUI after spawning the backend.
+    """
     try:
         binary = find_binary()
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
-    print(
-        f"Cow weight estimation API (aif-backend {VERSION}) "
-        f"listening on http://127.0.0.1:8080"
-    )
+    print(f"Cow Weight Estimator (aif-backend {VERSION})", flush=True)
+    print("WebUI: http://127.0.0.1:8080/", flush=True)
+    print("API:   http://127.0.0.1:8080/estimate-weight", flush=True)
+    if open_browser:
+        import webbrowser
+
+        webbrowser.open("http://127.0.0.1:8080/")
     subprocess.run([binary, "--host", "127.0.0.1", "--port", "8080"], check=False)
 
 

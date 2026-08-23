@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Estimate a cow's weight from an image.">
+  <title>Cow Weight Estimator</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Cow Weight Estimator home">
+        <span class="brand-mark" aria-hidden="true">CW</span>
+        <span>
+          <strong>Cow Weight Estimator</strong>
+          <small>Image-based livestock insights</small>
+        </span>
+      </a>
+      <div class="health" aria-live="polite">
+        <span id="health-dot" class="health-dot" aria-hidden="true"></span>
+        <span id="health-text">Checking backend…</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">LOCAL AI WORKSPACE</p>
+          <h1 id="page-title">Estimate with confidence.</h1>
+          <p class="intro-copy">Upload a clear cow image and get a fast, transparent weight estimate from your configured backend.</p>
+        </div>
+        <div class="intro-note">
+          <span class="note-icon" aria-hidden="true">+</span>
+          <span>For guidance only — use a scale for official records.</span>
+        </div>
+      </section>
+
+      <div class="dashboard-grid">
+        <section class="card workspace-card" aria-labelledby="input-heading">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">1 · INPUT</p>
+              <h2 id="input-heading">Choose a cow image</h2>
+            </div>
+            <span class="step-badge">Private by default</span>
+          </div>
+
+          <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Choose or drop a cow image">
+            <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" hidden>
+            <div id="dropzone-empty" class="dropzone-empty">
+              <div class="upload-icon" aria-hidden="true">↑</div>
+              <strong>Drop an image here</strong>
+              <span>or click to browse · JPEG, PNG, WebP, BMP, GIF</span>
+              <small>Images stay in this browser until you estimate.</small>
+            </div>
+            <div id="preview-wrap" class="preview-wrap" hidden>
+              <img id="preview-image" alt="Selected cow preview">
+              <div class="preview-overlay">Selected image</div>
+            </div>
+          </div>
+
+          <div id="file-meta" class="file-meta" hidden>
+            <div class="file-type" aria-hidden="true">IMG</div>
+            <div class="file-details">
+              <strong id="file-name"></strong>
+              <span id="file-size"></span>
+            </div>
+            <button id="remove-image" class="text-button" type="button">Remove</button>
+          </div>
+
+          <div class="action-row">
+            <button id="estimate-button" class="button button-primary" type="button">Estimate Weight</button>
+            <button id="demo-button" class="button button-secondary" type="button">Test demo cows</button>
+          </div>
+          <p id="status" class="status" role="status" aria-live="polite"></p>
+
+          <details id="advanced-settings" class="advanced">
+            <summary>Advanced Settings</summary>
+            <div class="settings-grid">
+              <label>
+                <span>Backend</span>
+                <select id="backend-select">
+                  <option value="ollama">ollama</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
+              <label>
+                <span>Model</span>
+                <input id="model-input" type="text" autocomplete="off" spellcheck="false" placeholder="gemma4:31b-cloud">
+              </label>
+              <label class="wide-field">
+                <span>Ollama URL</span>
+                <input id="ollama-url-input" type="url" autocomplete="off" spellcheck="false" placeholder="https://ollama.com/api/generate">
+              </label>
+              <label class="wide-field">
+                <span>API key <small>(sent only with this request)</small></span>
+                <div class="secret-field">
+                  <input id="api-key-input" type="password" autocomplete="new-password" spellcheck="false" placeholder="Optional override">
+                  <button id="toggle-key" class="field-button" type="button" aria-pressed="false">Show</button>
+                </div>
+              </label>
+              <label class="wide-field">
+                <span>Prompt</span>
+                <textarea id="prompt-input" rows="5" spellcheck="true"></textarea>
+              </label>
+              <button id="reset-prompt" class="text-button reset-button" type="button">Reset to default</button>
+            </div>
+          </details>
+        </section>
+
+        <section class="card results-card" aria-labelledby="results-heading">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">2 · RESULT</p>
+              <h2 id="results-heading">Latest estimate</h2>
+            </div>
+            <span id="result-source" class="source-pill" hidden></span>
+          </div>
+
+          <div id="empty-result" class="empty-result">
+            <div class="empty-chart" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <strong>Your estimate will appear here</strong>
+            <span>Choose an image to get started.</span>
+          </div>
+
+          <div id="result-content" hidden>
+            <div class="weight-hero">
+              <span>Estimated weight</span>
+              <div><strong id="weight-kg">—</strong><span>kg</span></div>
+              <p id="weight-lbs">— lb</p>
+            </div>
+
+            <dl class="result-grid">
+              <div><dt>Confidence</dt><dd id="confidence-value">—</dd></div>
+              <div><dt>Breed</dt><dd id="breed-value">—</dd></div>
+              <div><dt>Body condition</dt><dd id="condition-value">—</dd></div>
+              <div><dt>Request time</dt><dd id="elapsed-value">—</dd></div>
+              <div><dt>Request ID</dt><dd id="request-id-value">—</dd></div>
+              <div><dt>Backend</dt><dd id="backend-value">—</dd></div>
+            </dl>
+
+            <div class="response-block">
+              <div class="response-heading"><h3>Model response</h3><span>Raw text</span></div>
+              <pre id="model-response">No raw model response returned.</pre>
+            </div>
+
+            <div class="result-actions">
+              <button id="copy-button" class="button button-secondary" type="button">Copy result</button>
+              <button id="retry-button" class="button button-quiet" type="button">Retry</button>
+            </div>
+          </div>
+
+          <div id="error-content" class="error-content" role="alert" hidden>
+            <strong id="error-title">Estimate unavailable</strong>
+            <p id="error-message"></p>
+            <span id="error-request-id"></span>
+          </div>
+        </section>
+      </div>
+
+      <section class="card history-card" aria-labelledby="history-heading">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">SESSION</p>
+            <h2 id="history-heading">Recent estimates</h2>
+          </div>
+          <button id="clear-history" class="text-button" type="button">Clear history</button>
+        </div>
+        <div id="history-empty" class="history-empty">Successful estimates from this browser session will show here.</div>
+        <div id="history-list" class="history-list" role="list" hidden></div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Runs locally through the Rust backend.</span>
+      <a href="/info">API information</a>
+    </footer>
+  </div>
+</body>
+</html>

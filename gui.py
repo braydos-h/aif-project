@@ -1,13 +1,12 @@
-"""Backward-compatible entry point for the desktop GUI.
+"""Compatibility launcher for the browser-based WebUI.
 
-The Tkinter app lives in ``aif.gui``; this wrapper keeps
-``python gui.py`` (and ``start_gui.bat``) working unchanged. The app
-imports estimators from ``aif.estimator`` directly — no HTTP server runs.
+Use ``python app.py`` for a console-friendly server start. This legacy entry
+point starts the same Rust server and opens the WebUI in the default browser.
 """
 
-from aif.gui import CowWeightApp, main
+from app import main
 
-__all__ = ["CowWeightApp", "main"]
+__all__ = ["main"]
 
 if __name__ == "__main__":
-    main()
+    main(open_browser=True)
