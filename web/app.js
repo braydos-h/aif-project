@@ -79,6 +79,19 @@
     refs.status.className = `status${kind ? ` ${kind}` : ""}`;
   }
 
+  function setEstimateLabel(busy) {
+    // Support both legacy plain-text button and new span+arrow layout.
+    const label = busy ? "Estimating…" : "Estimate Weight";
+    const span = refs.estimate.querySelector("span");
+    if (span) {
+      span.textContent = label;
+      const arrow = refs.estimate.querySelector(".btn-arrow");
+      if (arrow) arrow.hidden = busy;
+    } else {
+      refs.estimate.textContent = label;
+    }
+  }
+
   function setBusy(busy) {
     state.busy = busy;
     refs.estimate.disabled = busy;
@@ -86,7 +99,7 @@
     refs.removeImage.disabled = busy;
     refs.copy.disabled = busy || !state.lastResult;
     refs.retry.disabled = busy || !state.lastRequest;
-    refs.estimate.textContent = busy ? "Estimating weight…" : "Estimate Weight";
+    setEstimateLabel(busy);
   }
 
   function formatBytes(bytes) {
@@ -117,6 +130,7 @@
       setStatus(`That image is too large. Choose a file under ${formatBytes(MAX_FILE_BYTES)}.`, "error");
       return;
     }
+    if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     state.file = file;
     state.previewUrl = URL.createObjectURL(file);
     state.lastResult = null;
@@ -132,10 +146,11 @@
     refs.errorContent.hidden = true;
     refs.source.hidden = true;
     refs.copy.disabled = true;
-    setStatus("Ready to estimate.");
+    setStatus("Ready to estimate — hit Estimate Weight or Ctrl+Enter.");
   }
 
   function clearFile() {
+    if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     state.file = null;
     state.previewUrl = "";
     refs.imageInput.value = "";
@@ -333,7 +348,7 @@
     try {
       const imageBase64 = await readAsDataUrl(file);
       const ok = await sendEstimate(imageBase64, { filename: file.name, thumbnailUrl: state.previewUrl });
-      if (ok) setStatus(`Estimate completed using ${state.lastResult.source}.`, "success");
+      if (ok) setStatus(`Estimate completed — ${state.lastResult.source} · ${formatNumber(state.lastResult.estimated_weight_kg)} kg`, "success");
     } catch (error) {
       renderError({ kind: "client", title: "Image unavailable", message: error.message });
     } finally {
@@ -395,7 +410,7 @@
     try {
       const imageBase64 = await readAsDataUrl(request.file);
       const ok = await sendEstimate(imageBase64, { filename: request.filename, thumbnailUrl: request.thumbnailUrl });
-      if (ok) setStatus(`Estimate completed using ${state.lastResult.source}.`, "success");
+      if (ok) setStatus(`Estimate completed — ${state.lastResult.source} · ${formatNumber(state.lastResult.estimated_weight_kg)} kg`, "success");
     } catch (error) {
       renderError({ kind: "client", title: "Image unavailable", message: error.message });
     } finally {
@@ -407,7 +422,8 @@
     if (!state.lastResult) return;
     const kg = formatNumber(state.lastResult.estimated_weight_kg);
     const lbs = state.lastResult.estimated_weight_lbs == null ? "" : ` / ${formatNumber(state.lastResult.estimated_weight_lbs)} lb`;
-    const text = `Estimated weight: ${kg} kg${lbs}`;
+    const breed = state.lastResult.breed ? ` · ${state.lastResult.breed}` : "";
+    const text = `Estimated weight: ${kg} kg${lbs}${breed} — via ${state.lastResult.source}`;
     try {
       await navigator.clipboard.writeText(text);
       setStatus("Result copied to the clipboard.", "success");
@@ -467,7 +483,9 @@
       event.preventDefault();
       refs.dropzone.classList.add("dragging");
     });
-    refs.dropzone.addEventListener("dragleave", () => refs.dropzone.classList.remove("dragging"));
+    refs.dropzone.addEventListener("dragleave", (event) => {
+      if (!refs.dropzone.contains(event.relatedTarget)) refs.dropzone.classList.remove("dragging");
+    });
     refs.dropzone.addEventListener("drop", (event) => {
       event.preventDefault();
       refs.dropzone.classList.remove("dragging");
@@ -499,6 +517,11 @@
         event.preventDefault();
         runSelected();
       }
+    });
+    // Paste from clipboard (instrument feel: Cmd+V anywhere drops image)
+    document.addEventListener("paste", (event) => {
+      const file = Array.from(event.clipboardData?.files || []).find((f) => supportedFile(f));
+      if (file) selectFile(file);
     });
   }
 
