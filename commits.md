@@ -641,3 +641,16 @@
 - Rewrote `web/styles.css` with a midnight-lab design system: warm off-white `--bg: #F6F4EF` / ink `--ink: #0B0B0C` + single lime `--lime: #EAFF54`, `Inter` + `ui-monospace` stacks, 22+ custom properties, `color-scheme` light/dark, radial lime glow, instrument dial + corner brackets on the dropzone, black pill primary CTA with arrow, dark mode inverts to near-black `#070708` with lime primary, `prefers-color-scheme` preserved for `tests/test_server.py`, focus rings, `textContent`-only rendering, no `localStorage`, responsive at 900 px / 560 px.
 - Polished `web/app.js` (511 → 540 lines, still `textContent`/DOM-only, no `innerHTML`, no storage, `Ctrl+Enter` scoped to prompt, `estimate-weight` string preserved): fixed `setBusy` to update the new `Estimate Weight →` span+arrow without clobbering children, added `URL.revokeObjectURL` on file swap/clear, improved `dragover`/`dragleave` handling, added clipboard-paste (`paste` event) support, enriched `copyResult`/`runSelected` status text with weight/source, and kept `local_fallback` handling, request-id propagation, and error codes intact.
 - Verified with the GNU toolchain (MSVC `link.exe` unavailable): `cargo +stable-x86_64-pc-windows-gnu build --release`, `cargo test` (25 passed), `python -m unittest discover -s tests -v` (59 passed), `ruff check .` clean, `node --check web/app.js` ok, manual `Invoke-WebRequest` to `/` and `/styles.css` returns new instrument HTML/CSS.
+
+## 2026-08-26 11:30 — Add CI workflow for commits (tests on whole app)
+- **New `.github/workflows/ci.yml` — full-app CI for commits:** triggers on `push` (all branches, i.e. every commit), `pull_request` to `main`, and `workflow_dispatch`; `concurrency` cancels superseded runs on the same ref; `permissions: contents: read`.
+- **Matrix:** `ubuntu-latest` + `windows-latest` × Python 3.12 (`setup-python@v5` with pip cache) — covers both platforms the Rust backend supports. `defaults.run.shell: bash` makes `pip install -e ".[dev]"` quoting consistent on Windows. `timeout-minutes: 20`, `fail-fast: false`.
+- **Steps mirror `CONTRIBUTING.md`/`AGENTS.md` commands:**
+  - `dtolnay/rust-toolchain@stable` with `rustfmt` + `clippy`, `Swatinem/rust-cache@v2` (save only on `main`),
+  - `cargo fmt --manifest-path backend/Cargo.toml -- --check`,
+  - `cargo clippy --manifest-path backend/Cargo.toml -- -D warnings` (advisory, `continue-on-error: true`),
+  - `cargo test --manifest-path backend/Cargo.toml`,
+  - `cargo build --release --manifest-path backend/Cargo.toml` (required before Python HTTP tests),
+  - `pip install -e ".[dev]"`, `ruff check .`, `node --check web/app.js`, `python -m unittest discover -s tests -v` (real-HTTP tests via `backend/target/release/aif-backend(.exe)`; respects `AIF_BACKEND_BIN`).
+- **Keeps existing `.github/workflows/build-windows.yml` (release-triggered Windows exe build) intact** — new `ci.yml` is additive.
+- **Formatting fix:** ran `cargo fmt --manifest-path backend/Cargo.toml` to satisfy the new fmt check; touched `backend/src/config.rs`, `fallback.rs`, `main.rs`, `parse.rs`, `validate.rs` (whitespace/import ordering/line breaks only, no behavior change). Verified `cargo fmt -- --check` and `ruff check .` now clean.

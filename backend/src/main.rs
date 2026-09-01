@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use aif_backend::config::{load_env_file, Config};
-use aif_backend::http::{ServerState, serve};
+use aif_backend::http::{serve, ServerState};
 
 fn main() -> std::io::Result<()> {
     // Same .env contract as the Python package: values already in the

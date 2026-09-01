@@ -74,9 +74,7 @@ fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
     if !bytes.len().is_multiple_of(4) {
         return Err("Image base64 payload is not valid base64".to_string());
     }
-    base64_decode_impl(bytes).ok_or_else(|| {
-        "Image base64 payload is not valid base64".to_string()
-    })
+    base64_decode_impl(bytes).ok_or_else(|| "Image base64 payload is not valid base64".to_string())
 }
 
 fn b64_val(b: u8) -> Option<u8> {
@@ -102,7 +100,12 @@ fn base64_decode_impl(input: &[u8]) -> Option<Vec<u8>> {
         chunk[n] = b;
         n += 1;
         if n == 4 {
-            let vals = [b64_val(chunk[0])?, b64_val(chunk[1])?, b64_val(chunk[2])?, b64_val(chunk[3])?];
+            let vals = [
+                b64_val(chunk[0])?,
+                b64_val(chunk[1])?,
+                b64_val(chunk[2])?,
+                b64_val(chunk[3])?,
+            ];
             let v = ((vals[0] as u32) << 18)
                 | ((vals[1] as u32) << 12)
                 | ((vals[2] as u32) << 6)

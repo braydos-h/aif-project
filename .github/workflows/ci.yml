@@ -1,0 +1,90 @@
+name: CI
+
+# Run the full test suite on every commit and pull request.
+# Covers the whole app: Rust backend (fmt/clippy/tests/build) + Python
+# package (ruff + unittest including real-HTTP Rust-binary tests) + WebUI
+# JS syntax check.  Mirrors the commands in CONTRIBUTING.md / AGENTS.md:
+#   cargo fmt --check --manifest-path backend/Cargo.toml
+#   cargo test --manifest-path backend/Cargo.toml
+#   cargo build --release --manifest-path backend/Cargo.toml
+#   ruff check .
+#   python -m unittest discover -s tests -v
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Shared key keeps ubuntu/windows caches separate automatically.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path backend/Cargo.toml -- --check
+
+      - name: Rust clippy
+        # Clippy is advisory; don't block the whole suite but surface warnings.
+        # Remove `continue-on-error` if you want clippy to be required.
+        run: cargo clippy --manifest-path backend/Cargo.toml -- -D warnings
+        continue-on-error: true
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path backend/Cargo.toml
+
+      - name: Build Rust backend (release)
+        run: cargo build --release --manifest-path backend/Cargo.toml
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint Python (ruff)
+        run: ruff check .
+
+      - name: Validate WebUI syntax
+        run: node --check web/app.js
+
+      - name: Run Python tests
+        # Requires the release binary built in the previous step.
+        # tests/test_server.py will locate backend/target/release/aif-backend
+        # (or .exe on Windows) or respect AIF_BACKEND_BIN if set.
+        run: python -m unittest discover -s tests -v

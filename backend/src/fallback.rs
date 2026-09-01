@@ -3,7 +3,7 @@
 //! Mirrors `CowWeightEstimator._estimate_fallback`: hash the image reference
 //! to a stable weight in the range 250–900 kg. Never touches the network.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::config::{kg_to_lbs, round1};
 

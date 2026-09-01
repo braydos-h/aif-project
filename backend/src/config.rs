@@ -7,7 +7,8 @@
 use std::env;
 use std::path::Path;
 
-pub const DEFAULT_PROMPT: &str = "Estimate this cow's weight in kilograms from the provided image. \
+pub const DEFAULT_PROMPT: &str =
+    "Estimate this cow's weight in kilograms from the provided image. \
 Reply with ONLY a JSON object of the form \
 {\"weight_kg\": <number>, \"confidence\": <0..1>, \
 \"breed\": <string>, \"body_condition_score\": <1..9>} \

@@ -145,7 +145,11 @@ fn first_number(text: &str) -> Option<f64> {
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            if i < bytes.len() && bytes[i] == b'.' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+            if i < bytes.len()
+                && bytes[i] == b'.'
+                && i + 1 < bytes.len()
+                && bytes[i + 1].is_ascii_digit()
+            {
                 i += 1;
                 while i < bytes.len() && bytes[i].is_ascii_digit() {
                     i += 1;
@@ -211,6 +215,9 @@ mod tests {
     #[test]
     fn decimal_kg_preferred_over_bare_number() {
         // "730" appears before "730.5 kg"; the kg rule must win.
-        assert_eq!(extract_weight_from_text("around 730 in 730.5 kg range"), Some(730.5));
+        assert_eq!(
+            extract_weight_from_text("around 730 in 730.5 kg range"),
+            Some(730.5)
+        );
     }
 }
