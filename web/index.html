@@ -3,221 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Estimate a cow's weight from a single photo — local or Ollama.">
+  <meta name="description" content="Estimate a cow's weight from a photo.">
   <meta name="color-scheme" content="light dark">
-  <title>Cow Weight Estimator — Field Instrument</title>
+  <title>Cow Weight Estimator</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <div class="shell">
-    <header class="nav" aria-label="Primary">
-      <a class="brand" href="/" aria-label="Cow Weight Estimator home">
-        <span class="brand-mark" aria-hidden="true">◬</span>
-        <span class="brand-text">
-          <strong>Cow Weight Estimator</strong>
-          <span>AIF&nbsp;— Field Instrument 01</span>
-        </span>
-      </a>
-      <div class="nav-actions">
-        <div class="health" aria-live="polite">
-          <span id="health-dot" class="health-dot" aria-hidden="true"></span>
-          <span id="health-text">Checking backend…</span>
-        </div>
-        <a class="nav-link" href="/info">API→</a>
-      </div>
-    </header>
+  <main>
+    <h1>Cow Weight Estimator</h1>
+    <p class="note">Upload cow photos to get a weight estimate. Use a verified scale for purchase, dosing, or official records.</p>
 
-    <section class="hero" aria-labelledby="page-title">
-      <div class="hero-main">
-        <p class="kicker"><span class="kicker-dot" aria-hidden="true"></span> FIELD INSTRUMENT — LOCAL FIRST &nbsp;·&nbsp; NO STORAGE</p>
-        <h1 id="page-title">Weight<br>from a<span class="hero-accent"> photo.</span></h1>
-        <p class="lede">Drop a clear side-profile. Get an instant, explainable estimate on-device or via your Ollama backend. Nothing leaves the browser until you hit Estimate.</p>
-        <div class="hero-badges" aria-hidden="true">
-          <span>JPEG</span><span>PNG</span><span>WebP</span><span>BMP</span><span>GIF</span>
-        </div>
-      </div>
-      <div class="hero-side">
-        <div class="spec-card">
-          <div class="spec-head">
-            <span class="spec-label">SPEC</span>
-            <span class="spec-pill">FOR GUIDANCE ONLY</span>
-          </div>
-          <p>Use a verified scale for purchase, dosing, or official records. This instrument is for fast field guidance.</p>
-          <div class="spec-stats">
-            <div><span>250–900</span><small>kg range</small></div>
-            <div><span>≤15 MB</span><small>per image</small></div>
-            <div><span>PRIVATE</span><small>in-browser only</small></div>
-          </div>
-        </div>
-        <div class="ticker" aria-hidden="true">
-          <span>LOCAL_FALLBACK</span><span>·</span><span>OLLAMA_CLOUD</span><span>·</span><span>SHA-256</span><span>·</span><span>TTL CACHE</span>
-        </div>
-      </div>
+    <label for="image-input">Choose images</label>
+    <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple>
+    <button id="estimate-button" type="button">Estimate Weight</button>
+    <p id="status" role="status" aria-live="polite"></p>
+
+    <section id="result-area" aria-live="polite" aria-label="Latest estimate"></section>
+
+    <section aria-labelledby="history-heading">
+      <h2 id="history-heading">History</h2>
+      <p id="history-empty">Estimates from this session will show here.</p>
+      <ul id="history-list" hidden></ul>
     </section>
-
-    <div class="grid">
-      <!-- INPUT -->
-      <section class="panel input-panel" aria-labelledby="input-heading">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">01 — INPUT</p>
-            <h2 id="input-heading">Choose a cow image</h2>
-          </div>
-          <span class="chip">Private by default</span>
-        </div>
-
-        <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Choose or drop a cow image">
-          <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" hidden>
-          <!-- corner brackets -->
-          <span class="corner tl" aria-hidden="true"></span>
-          <span class="corner tr" aria-hidden="true"></span>
-          <span class="corner bl" aria-hidden="true"></span>
-          <span class="corner br" aria-hidden="true"></span>
-
-          <div id="dropzone-empty" class="dropzone-empty">
-            <div class="upload-mark" aria-hidden="true"><span>↗</span></div>
-            <strong>Drop an image here</strong>
-            <span>or click to browse — JPEG, PNG, WebP, BMP, GIF</span>
-            <small>Images stay in this browser until you estimate.</small>
-          </div>
-
-          <div id="preview-wrap" class="preview-wrap" hidden>
-            <img id="preview-image" alt="Selected cow preview">
-            <div class="preview-bar">
-              <span>Selected</span>
-              <span aria-hidden="true">●</span>
-            </div>
-          </div>
-        </div>
-
-        <div id="file-meta" class="file-meta" hidden>
-          <div class="file-type" aria-hidden="true">IMG</div>
-          <div class="file-details">
-            <strong id="file-name"></strong>
-            <span id="file-size"></span>
-          </div>
-          <button id="remove-image" class="text-button" type="button">Remove</button>
-        </div>
-
-        <div class="action-row">
-          <button id="estimate-button" class="button button-primary" type="button"><span>Estimate Weight</span><span aria-hidden="true" class="btn-arrow">→</span></button>
-          <button id="demo-button" class="button button-secondary" type="button">Test demo cows</button>
-        </div>
-        <p id="status" class="status" role="status" aria-live="polite"></p>
-
-        <details id="advanced-settings" class="advanced">
-          <summary><span>Advanced settings</span><span class="summary-icon" aria-hidden="true"></span></summary>
-          <div class="settings-grid">
-            <label>
-              <span>Backend</span>
-              <select id="backend-select">
-                <option value="ollama">ollama</option>
-                <option value="none">none</option>
-              </select>
-            </label>
-            <label>
-              <span>Model</span>
-              <input id="model-input" type="text" autocomplete="off" spellcheck="false" placeholder="gemma4:31b-cloud">
-            </label>
-            <label class="wide-field">
-              <span>Ollama URL</span>
-              <input id="ollama-url-input" type="url" autocomplete="off" spellcheck="false" placeholder="https://ollama.com/api/generate">
-            </label>
-            <label class="wide-field">
-              <span>API key <small>· sent only with this request</small></span>
-              <div class="secret-field">
-                <input id="api-key-input" type="password" autocomplete="new-password" spellcheck="false" placeholder="Optional override">
-                <button id="toggle-key" class="field-button" type="button" aria-pressed="false">Show</button>
-              </div>
-            </label>
-            <label class="wide-field">
-              <span>Prompt <small>· Ctrl+Enter to estimate</small></span>
-              <textarea id="prompt-input" rows="5" spellcheck="true"></textarea>
-            </label>
-            <button id="reset-prompt" class="text-button reset-button" type="button">Reset to default</button>
-          </div>
-        </details>
-      </section>
-
-      <!-- RESULT -->
-      <section class="panel result-panel" aria-labelledby="results-heading">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">02 — RESULT</p>
-            <h2 id="results-heading">Latest estimate</h2>
-          </div>
-          <span id="result-source" class="source-pill" hidden></span>
-        </div>
-
-        <div id="empty-result" class="empty-result">
-          <div class="instrument" aria-hidden="true">
-            <div class="dial">
-              <span class="dial-tick"></span><span class="dial-tick"></span><span class="dial-tick"></span><span class="dial-tick"></span><span class="dial-tick"></span><span class="dial-tick"></span>
-              <div class="dial-center"><span>—</span></div>
-            </div>
-            <div class="instrument-line"></div>
-            <div class="instrument-bars"><span></span><span></span><span></span><span></span><span></span></div>
-          </div>
-          <strong>Your estimate will appear here</strong>
-          <span>Choose an image to get started.</span>
-        </div>
-
-        <div id="result-content" hidden>
-          <div class="weight-hero">
-            <div class="weight-label">
-              <span>Estimated weight</span>
-              <span class="live-dot" aria-hidden="true"></span>
-            </div>
-            <div class="weight-row"><strong id="weight-kg">—</strong><span>kg</span></div>
-            <p id="weight-lbs">— lb</p>
-          </div>
-
-          <dl class="result-grid">
-            <div><dt>Confidence</dt><dd id="confidence-value">—</dd></div>
-            <div><dt>Breed</dt><dd id="breed-value">—</dd></div>
-            <div><dt>Body condition</dt><dd id="condition-value">—</dd></div>
-            <div><dt>Request time</dt><dd id="elapsed-value">—</dd></div>
-            <div><dt>Request ID</dt><dd id="request-id-value">—</dd></div>
-            <div><dt>Backend</dt><dd id="backend-value">—</dd></div>
-          </dl>
-
-          <div class="response-block">
-            <div class="response-heading"><h3>Model response</h3><span>RAW TEXT</span></div>
-            <pre id="model-response">No raw model response returned.</pre>
-          </div>
-
-          <div class="result-actions">
-            <button id="copy-button" class="button button-secondary" type="button">Copy result</button>
-            <button id="retry-button" class="button button-quiet" type="button">Retry</button>
-          </div>
-        </div>
-
-        <div id="error-content" class="error-content" role="alert" hidden>
-          <div class="error-icon" aria-hidden="true">!</div>
-          <strong id="error-title">Estimate unavailable</strong>
-          <p id="error-message"></p>
-          <span id="error-request-id"></span>
-        </div>
-      </section>
-    </div>
-
-    <section class="panel history-panel" aria-labelledby="history-heading">
-      <div class="panel-head">
-        <div>
-          <p class="eyebrow">SESSION</p>
-          <h2 id="history-heading">Recent estimates</h2>
-        </div>
-        <button id="clear-history" class="text-button" type="button">Clear history</button>
-      </div>
-      <div id="history-empty" class="history-empty">Successful estimates from this browser session will show here.</div>
-      <div id="history-list" class="history-list" role="list" hidden></div>
-    </section>
-
-    <footer class="foot">
-      <span>Runs locally through the Rust backend <span aria-hidden="true">·</span> No data persisted.</span>
-      <span><a href="/health">Health</a> &nbsp;·&nbsp; <a href="/demo-cows">Demos</a></span>
-    </footer>
-  </div>
+  </main>
 </body>
 </html>
