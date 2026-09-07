@@ -654,3 +654,9 @@
   - `pip install -e ".[dev]"`, `ruff check .`, `node --check web/app.js`, `python -m unittest discover -s tests -v` (real-HTTP tests via `backend/target/release/aif-backend(.exe)`; respects `AIF_BACKEND_BIN`).
 - **Keeps existing `.github/workflows/build-windows.yml` (release-triggered Windows exe build) intact** — new `ci.yml` is additive.
 - **Formatting fix:** ran `cargo fmt --manifest-path backend/Cargo.toml` to satisfy the new fmt check; touched `backend/src/config.rs`, `fallback.rs`, `main.rs`, `parse.rs`, `validate.rs` (whitespace/import ordering/line breaks only, no behavior change). Verified `cargo fmt -- --check` and `ruff check .` now clean.
+
+## 2026-09-08 09:18 — Widen CI Python matrix to 3.11–3.13
+- **Context:** `ci.yml` already tested all code (cargo fmt/clippy/test + release build, `ruff check .`, `node --check web/app.js`, full `unittest discover` incl. real-HTTP Rust-binary tests) on ubuntu+windows × Python 3.12; `pyproject.toml` declares `requires-python = >=3.11` but only 3.12 was exercised.
+- **Change (`.github/workflows/ci.yml` only):** matrix `python-version` `["3.12"]` → `["3.11", "3.12", "3.13"]` (2 → 6 jobs). No step or behavior changes; YAML re-validated.
+- **Local verification:** workflow YAML parses; non-binary Python tests pass (39 tests OK — `test_server.py` HTTP tests need the release binary, built in CI before that step); cargo unavailable on this box so Rust steps rely on CI.
+- **Skipped:** separate lint/typecheck/security jobs — single test job mirrors CONTRIBUTING.md commands; add only if a specific check proves flaky or slow enough to split out.
