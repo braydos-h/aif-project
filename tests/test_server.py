@@ -461,7 +461,13 @@ class EstimateApiTests(unittest.TestCase):
         self.assertIn("request_id", payload)
 
     def test_over_limit_image_url_rejected(self):
-        import functools
+        # NOTE (deviation from brief): the brief posted this to the class
+        # server, which runs AIF_AI_BACKEND=none. The fallback path never
+        # fetches URLs (parity with aif/estimator.py), so it returned 200.
+        # Route this request to the ollama path via per-request overrides so
+        # it exercises the Task 3 fetch-size check end-to-end. Image
+        # validation runs before any Ollama call, so the dummy ollama_url is
+        # never contacted and no API key is needed (host != ollama.com).
         import http.server
         import threading
 
@@ -484,7 +490,14 @@ class EstimateApiTests(unittest.TestCase):
         try:
             url = f"http://127.0.0.1:{httpd.server_port}/big.png"
             with self.assertRaises(urllib.error.HTTPError) as context:
-                self.post({"image_base64": None, "image_url": url})
+                self.post(
+                    {
+                        "image_base64": None,
+                        "image_url": url,
+                        "backend": "ollama",
+                        "ollama_url": "http://127.0.0.1:9/api/generate",
+                    }
+                )
             self.assertEqual(context.exception.code, 400)
             error = json.loads(context.exception.read().decode("utf-8"))
             self.assertEqual(error["code"], "invalid_image")
