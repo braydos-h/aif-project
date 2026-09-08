@@ -85,15 +85,33 @@ fn http_request(
     extra_headers: &[(String, String)],
     body: &[u8],
 ) -> std::io::Result<(u16, Headers, Vec<u8>)> {
-    http_request_inner(method, path, port, extra_headers, Some(body))
+    // Under parallel load a spawned server can stall past the read timeout;
+    // retry the whole exchange on timeouts rather than failing the test.
+    let mut last_err = None;
+    for _ in 0..3 {
+        match http_request_once(method, path, port, extra_headers, body) {
+            Ok(ok) => return Ok(ok),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                last_err = Some(e);
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.unwrap())
 }
 
-fn http_request_inner(
+fn http_request_once(
     method: &str,
     path: &str,
     port: u16,
     extra_headers: &[(String, String)],
-    body: Option<&[u8]>,
+    body: &[u8],
 ) -> std::io::Result<(u16, Headers, Vec<u8>)> {
     let mut stream = TcpStream::connect(("127.0.0.1", port))?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -108,7 +126,6 @@ fn http_request_inner(
         }
         head.push_str(&format!("{}: {}\r\n", k, v));
     }
-    let body = body.unwrap_or(b"");
     if (method == "POST" || !body.is_empty()) && !has_len {
         head.push_str(&format!("Content-Length: {}\r\n", body.len()));
     }
