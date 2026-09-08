@@ -433,6 +433,65 @@ class EstimateApiTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(body["source"], "local_fallback")
 
+    def test_truncated_body_returns_400_json(self):
+        import socket as _socket
+
+        sock = _socket.create_connection(("127.0.0.1", self.server.port), timeout=10)
+        try:
+            sock.sendall(
+                b"POST /estimate-weight HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: 100\r\n"
+                b"Connection: close\r\n\r\n"
+                b'{"'
+            )
+            sock.shutdown(_socket.SHUT_WR)
+            raw = b""
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                raw += chunk
+        finally:
+            sock.close()
+        head, _, body = raw.partition(b"\r\n\r\n")
+        self.assertIn(b"400", head.split(b"\r\n")[0])
+        payload = json.loads(body.decode("utf-8"))
+        self.assertIn("request_id", payload)
+
+    def test_over_limit_image_url_rejected(self):
+        import functools
+        import http.server
+        import threading
+
+        blob = b"\x89PNG\r\n\x1a\n" + b"\x00" * (20 * 1024 * 1024 + 1)
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(blob)))
+                self.end_headers()
+                self.wfile.write(blob)
+
+            def log_message(self, *args):
+                pass
+
+        httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{httpd.server_port}/big.png"
+            with self.assertRaises(urllib.error.HTTPError) as context:
+                self.post({"image_base64": None, "image_url": url})
+            self.assertEqual(context.exception.code, 400)
+            error = json.loads(context.exception.read().decode("utf-8"))
+            self.assertEqual(error["code"], "invalid_image")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -665,3 +665,7 @@
 - **Context:** `09cbcf8` had already rewritten `web/` to the super-simple batch-upload + history page with `tests/test_webui.py` guards, but `README.md` and `AGENTS.md` still described the retired instrument UI (drag-and-drop, Advanced Settings, demo cows, copy/retry, `Ctrl+Enter`).
 - **Change:** rewrote the README WebUI section to match the simple page (batch selection, sequential estimates, latest-answer + 20-item session history, nothing stored); trimmed the stale `Ctrl+Enter` line from `AGENTS.md`. No code changes; backend untouched.
 - **Verification:** 39 runnable Python tests pass (`test_server.py` HTTP tests need the release binary — no cargo on this box, covered by CI), `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage` in `web/app.js`.
+
+## 2026-09-08 (session: Task 5 strict CLI parsing + installed-binary .env lookup)
+- **Change (`backend/src/main.rs`, `backend/src/config.rs` only; `ed4292d`):** new `parse_args` (`--host`/`--port` space + `=` forms, `-h`/`--help` → usage/exit 0, unknown/missing/invalid → stderr + usage/exit 2); new `env_candidates` (cwd → exe-dir → compile root, first file wins) with shared `apply_env_content` parser; deleted duplicated test helper loop. `from_env` TTL clamp untouched.
+- **Verification:** TDD (new tests failed to compile pre-implementation); `cargo test` 36/36 pass; `cargo fmt --check` clean; manual `--help`/bad-flag/bad-port exit codes 0/2/2 confirmed.
