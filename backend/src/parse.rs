@@ -267,34 +267,23 @@ mod tests {
     fn nested_json_matches_python_innermost_block() {
         // Python: re.search(r"\{[^{}]*\}") finds the inner block -> 600.0
         let (weight, _) =
-            parse_structured_response(r#"{"weight_kg": 100, "nested": {"weight_kg": 600}}"#).unwrap();
+            parse_structured_response(r#"{"weight_kg": 100, "nested": {"weight_kg": 600}}"#)
+                .unwrap();
         assert_eq!(weight, 600.0);
     }
 
     #[test]
     fn leading_dot_and_trailing_dot_match_python() {
         // Python kg-regex needs \d+(\.\d+)?: ".5 kg" matches "5 kg" -> 5.0
-        assert_eq!(
-            extract_weight_from_text("10 and .5 kg"),
-            Some(5.0)
-        );
+        assert_eq!(extract_weight_from_text("10 and .5 kg"), Some(5.0));
         // "5. kg" is not a kg-match; bare-number fallback -> 10.0
-        assert_eq!(
-            extract_weight_from_text("10 and 5. kg"),
-            Some(10.0)
-        );
+        assert_eq!(extract_weight_from_text("10 and 5. kg"), Some(10.0));
     }
 
     #[test]
     fn nbsp_and_vt_count_as_space_before_kg() {
         // NBSP (U+00A0) between number and "kg", and vertical tab
-        assert_eq!(
-            extract_weight_from_text("10 450\u{a0}kg"),
-            Some(450.0)
-        );
-        assert_eq!(
-            extract_weight_from_text("10 450\x0bkg"),
-            Some(450.0)
-        );
+        assert_eq!(extract_weight_from_text("10 450\u{a0}kg"), Some(450.0));
+        assert_eq!(extract_weight_from_text("10 450\x0bkg"), Some(450.0));
     }
 }
