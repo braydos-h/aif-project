@@ -109,13 +109,14 @@ fn number_before(text: &str, end: usize) -> Option<usize> {
     if i == 0 {
         return None;
     }
-    // Fractional part.
+    // Fractional part: only consume '.' when a digit precedes it, mirroring
+    // Python `(\d+(?:\.\d+)?)` — so ".5 kg" scans as "5", not ".5".
     let mut seen_dot = false;
     while i > 0 {
         let b = bytes[i - 1];
         if b.is_ascii_digit() {
             i -= 1;
-        } else if b == b'.' && !seen_dot {
+        } else if b == b'.' && !seen_dot && i >= 2 && bytes[i - 2].is_ascii_digit() {
             seen_dot = true;
             i -= 1;
         } else {
