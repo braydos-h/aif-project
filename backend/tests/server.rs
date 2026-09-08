@@ -588,3 +588,35 @@ fn css_stays_small_and_supports_dark_mode() {
     let lines = css.lines().filter(|l| !l.trim().is_empty()).count();
     assert!(lines <= 200, "stylesheet grew to {} lines", lines);
 }
+
+
+#[test]
+fn index_has_demo_picker_capture_and_disclaimer() {
+    let html = web_file("index.html");
+    for needle in [
+        r#"id="demo-select""#,
+        r#"id="demo-button""#,
+        r#"capture="environment""#,
+        "not a scale or vet advice",
+        "local_fallback",
+    ] {
+        assert!(html.contains(needle), "index.html missing {}", needle);
+    }
+}
+
+#[test]
+fn js_demo_picker_uses_image_url_and_matches_20mb_limit() {
+    let js = web_file("app.js");
+    assert!(js.contains("demo-select"));
+    assert!(js.contains("/demo-cows"));
+    assert!(js.contains("image_url"));
+    assert!(js.contains("20 * 1024 * 1024"));
+    assert!(!js.contains("15 * 1024 * 1024"));
+}
+
+#[test]
+fn css_has_touch_targets_and_print_rules() {
+    let css = web_file("styles.css");
+    assert!(css.contains("min-height: 44px"));
+    assert!(css.contains("@media print"));
+}
