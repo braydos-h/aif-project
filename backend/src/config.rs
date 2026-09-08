@@ -24,23 +24,32 @@ pub const OLLAMA_RETRY_BACKOFF_SECS: u64 = 1;
 pub const KG_TO_LBS: f64 = 2.20462;
 pub const VERSION: &str = "0.1.0";
 
-/// Load a `.env` file into the environment without overriding existing values.
-///
-/// Looks for the file in the repository root (the parent of the `backend`
-/// directory). Lines like `KEY=value` are parsed; blank lines and `#`
-/// comments are ignored. Quoted values have the quotes stripped.
-pub fn load_env_file(filename: &str) {
+/// Locations probed for `.env`, in priority order: current directory,
+/// directory next to the running executable (installed binaries), then
+/// the source-tree root. Mirrors `aif/config.py::_env_candidates`
+/// (which probes exe-dir then repo root).
+pub fn env_candidates(filename: &str) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    out.push(
+        std::env::current_dir()
+            .unwrap_or_else(|_| ".".into())
+            .join(filename),
+    );
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            out.push(dir.join(filename));
+        }
+    }
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap_or_else(|| Path::new("."));
-    let env_path = repo_root.join(filename);
-    if !env_path.is_file() {
-        return;
-    }
-    let content = match std::fs::read_to_string(&env_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
+    out.push(repo_root.join(filename));
+    out
+}
+
+/// Parse `.env` content without touching the environment (shared by the
+/// loader and tests).
+fn apply_env_content(content: &str) {
     for raw_line in content.lines() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') || !line.contains('=') {
@@ -58,6 +67,23 @@ pub fn load_env_file(filename: &str) {
         }
         if !key.is_empty() && env::var(key).is_err() {
             env::set_var(key, &value);
+        }
+    }
+}
+
+/// Load a `.env` file into the environment without overriding existing values.
+///
+/// Probes [`env_candidates`] in order; the first file found wins. Lines like
+/// `KEY=value` are parsed; blank lines and `#` comments are ignored. Quoted
+/// values have the quotes stripped.
+pub fn load_env_file(filename: &str) {
+    for path in env_candidates(filename) {
+        if !path.is_file() {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            apply_env_content(&content);
+            return;
         }
     }
 }
@@ -140,27 +166,15 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[test]
+    fn env_candidates_prefer_cwd_then_exe_dir() {
+        let c = env_candidates(".env");
+        assert!(c.len() >= 2);
+        assert_eq!(c[0].file_name().unwrap(), ".env");
+    }
+
     fn parse_env_file(path: &str) {
-        // Same parsing logic as load_env_file, factored for arbitrary paths.
         let content = std::fs::read_to_string(Path::new(path)).unwrap();
-        for raw_line in content.lines() {
-            let line = raw_line.trim();
-            if line.is_empty() || line.starts_with('#') || !line.contains('=') {
-                continue;
-            }
-            let (key, value) = line.split_once('=').unwrap();
-            let key = key.trim();
-            let mut value = value.trim().to_string();
-            if value.len() >= 2 {
-                let first = value.chars().next().unwrap();
-                let last = value.chars().last().unwrap();
-                if first == last && (first == '\'' || first == '"') {
-                    value = value[1..value.len() - 1].to_string();
-                }
-            }
-            if !key.is_empty() && env::var(key).is_err() {
-                env::set_var(key, &value);
-            }
-        }
+        apply_env_content(&content);
     }
 }
