@@ -95,6 +95,12 @@ pub fn serve(state: Arc<ServerState>, host: &str, port: u16) -> std::io::Result<
     Ok(())
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Per-process counter mixed into request ids so two requests in the same
+/// clock tick still differ.
+static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 /// Generate a short unique id for the current request (8 hex chars).
 fn new_request_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -102,8 +108,11 @@ fn new_request_id() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
+    let counter = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
     sha2::Digest::update(&mut hasher, nanos.to_le_bytes());
+    sha2::Digest::update(&mut hasher, std::process::id().to_le_bytes());
+    sha2::Digest::update(&mut hasher, counter.to_le_bytes());
     let digest = sha2::Digest::finalize(hasher);
     let mut out = String::with_capacity(8);
     for b in digest.iter().take(4) {
@@ -253,7 +262,13 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
     let mut body = Vec::new();
     if method == "POST" && content_length > 0 {
         body.resize(content_length, 0);
-        reader.read_exact(&mut body)?;
+        if reader.read_exact(&mut body).is_err() {
+            let response = Response::json(
+                400,
+                error_json(CODE_INVALID_JSON, "Truncated request body", &request_id),
+            );
+            return write_response(&mut stream, &request_id, &response);
+        }
     }
 
     let response = dispatch(&method, &path, &body, &request_id, state);
@@ -545,6 +560,15 @@ fn handle_estimate(body: &[u8], request_id: &str, state: &ServerState) -> Respon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_ids_are_unique_under_burst() {
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..5000 {
+            ids.insert(new_request_id());
+        }
+        assert_eq!(ids.len(), 5000);
+    }
 
     #[test]
     fn static_routes_are_explicit_and_options_are_validated() {
