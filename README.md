@@ -1,4 +1,4 @@
-# Cow Weight Estimator
+# AIF-PROJECT
 
 Cow Weight Estimator is a small local web application that turns a cow image
 into a rough weight estimate. The Rust backend serves the browser UI and the
