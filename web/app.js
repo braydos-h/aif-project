@@ -15,6 +15,8 @@
   const $ = (id) => document.getElementById(id);
   const input = $("image-input");
   const button = $("estimate-button");
+  const demoSelect = $("demo-select");
+  const demoButton = $("demo-button");
   const status = $("status");
   const resultArea = $("result-area");
   const historyList = $("history-list");
@@ -50,25 +52,25 @@
     });
   }
 
-  async function postEstimate(imageBase64) {
+  async function requestEstimate(body) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 90_000);
     try {
       const response = await fetch("/estimate-weight", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_base64: imageBase64 }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
-      let payload = {};
+      let data = {};
       try {
-        payload = await response.json();
+        data = await response.json();
       } catch (_error) {
-        payload = {};
+        data = {};
       }
-      if (!response.ok) throw { status: response.status, payload };
-      if (typeof payload.estimated_weight_kg !== "number") throw { status: 0, payload };
-      return payload;
+      if (!response.ok) throw { status: response.status, payload: data };
+      if (typeof data.estimated_weight_kg !== "number") throw { status: 0, payload: data };
+      return data;
     } finally {
       window.clearTimeout(timeout);
     }
@@ -138,7 +140,7 @@
         continue;
       }
       try {
-        const result = await postEstimate(await readAsDataUrl(file));
+        const result = await requestEstimate({ image_base64: await readAsDataUrl(file) });
         const kg = formatWeight(result.estimated_weight_kg);
         const lbs = typeof result.estimated_weight_lbs === "number"
           ? formatWeight(result.estimated_weight_lbs)
@@ -172,8 +174,72 @@
     }
   }
 
+  async function loadDemos() {
+    try {
+      const response = await fetch("/demo-cows", { cache: "no-store" });
+      const payload = await response.json();
+      const demos = Array.isArray(payload.demos) ? payload.demos : [];
+      demoSelect.replaceChildren();
+      if (!demos.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "Demo cows unavailable";
+        demoSelect.append(option);
+        return;
+      }
+      for (const demo of demos) {
+        const option = document.createElement("option");
+        option.value = typeof demo.id === "string" ? demo.id : "";
+        option.textContent = typeof demo.name === "string" ? demo.name : `Demo ${option.value}`;
+        demoSelect.append(option);
+      }
+    } catch (_error) {
+      demoSelect.replaceChildren();
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "Demo cows unavailable";
+      demoSelect.append(option);
+    }
+  }
+
+  function pushHistory(filename, result) {
+    const kg = formatWeight(result.estimated_weight_kg);
+    const lbs = typeof result.estimated_weight_lbs === "number"
+      ? formatWeight(result.estimated_weight_lbs)
+      : null;
+    const source = typeof result.source === "string" ? result.source : "unknown";
+    const breed = typeof result.breed === "string" && result.breed ? ` · ${result.breed}` : "";
+    showResult(`${filename}: ${kg} kg`, lbs === null ? `${source}${breed}` : `${lbs} lb · ${source}${breed}`);
+    history.unshift({ filename, kg, lbs, source });
+    if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
+    renderHistory();
+  }
+
+  async function runDemo() {
+    const id = demoSelect.value;
+    if (!id) {
+      setStatus("Choose a demo cow first.");
+      return;
+    }
+    demoButton.disabled = true;
+    const label = demoSelect.options[demoSelect.selectedIndex]?.textContent || `Demo ${id}`;
+    setStatus(`Estimating ${label}…`);
+    try {
+      const url = new URL(`/demo-cows/${encodeURIComponent(id)}`, window.location.origin).toString();
+      pushHistory(label, await requestEstimate({ image_url: url }));
+      setStatus("Done.");
+    } catch (error) {
+      showResult(`${label}: estimate failed.`, errorMessage(error));
+      setStatus("Failed. Try again.");
+    } finally {
+      demoButton.disabled = false;
+    }
+  }
+
   button.addEventListener("click", runEstimates);
+  demoButton.addEventListener("click", runDemo);
   setStatus("Choose images to begin.");
   renderHistory();
   void checkHealth();
+  void loadDemos();
 })();
