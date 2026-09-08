@@ -694,3 +694,7 @@
 - **Change (scoped paths only, `web/` untouched):** `backend/tests/server.rs` (ported HTTP contract + static WebUI guards, fixed `CARGO_MANIFEST_DIR` debug-binary fallback path, `cargo fmt` reflow, stale doc comment); `ci.yml`/`build-windows.yml` (dropped Python matrix, setup-python, ruff, unittest — Rust fmt/clippy/test/build + `node --check` only); `start_gui.bat`/`.ps1` (call release binary directly + open browser via OS); `install.ps1` (dropped Python install block); `README`/`CONTRIBUTING`/`AGENTS`/`CLAUDE.md` (binary launch, `cargo test` only, no-Python layout); `.gitignore` (dropped Python artifacts).
 - **Verification:** `cargo fmt --check` clean; `cargo test` 69 pass (33 lib + 3 main + 33 integration); release build OK; `node --check web/app.js` OK. Remaining Python mentions in docs are intentional ("no Python runtime").
 - **Skipped:** `--open` flag on the binary (start scripts cover browser-open in one line); touching `web/app.js` (peer-owned quick-win edit).
+
+## 2026-09-08 (session: Linux start.sh launcher)
+- **Change (`start.sh`, new):** POSIX-sh equivalent of `start_gui.bat`/`.ps1` — cds to the script dir, errors out if `backend/target/release/aif-backend` is missing (with the cargo build hint), starts it with `--host 127.0.0.1 --port 8080`, opens the WebUI via `xdg-open`/`open` fallback, and waits on the server PID so Ctrl-C stops it.
+- **Verification:** `chmod +x`, `sh -n` clean.
