@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const MAX_FILE_BYTES = 15 * 1024 * 1024;
+  const MAX_FILE_BYTES = 20 * 1024 * 1024;
   const MAX_HISTORY = 20;
   const ALLOWED_TYPES = new Set([
     "image/jpeg",

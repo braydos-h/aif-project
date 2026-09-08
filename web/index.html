@@ -15,17 +15,30 @@
     <p class="note">Upload cow photos to get a weight estimate. Use a verified scale for purchase, dosing, or official records.</p>
 
     <label for="image-input">Choose images</label>
-    <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple>
+    <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple capture="environment">
     <button id="estimate-button" type="button">Estimate Weight</button>
     <p id="status" role="status" aria-live="polite"></p>
 
     <section id="result-area" aria-live="polite" aria-label="Latest estimate"></section>
+
+    <section aria-labelledby="demo-heading">
+      <h2 id="demo-heading">Demo cows</h2>
+      <label for="demo-select">Choose a demo cow</label>
+      <select id="demo-select">
+        <option value="">Loading demo cows…</option>
+      </select>
+      <button id="demo-button" type="button">Estimate Demo Cow</button>
+    </section>
 
     <section aria-labelledby="history-heading">
       <h2 id="history-heading">History</h2>
       <p id="history-empty">Estimates from this session will show here.</p>
       <ul id="history-list" hidden></ul>
     </section>
+
+    <footer>
+      <p class="note">Estimate only — not a scale or vet advice. Check the source label (ollama vs local_fallback).</p>
+    </footer>
   </main>
 </body>
 </html>
