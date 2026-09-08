@@ -19,7 +19,7 @@ fn binary_path() -> String {
     }
     option_env!("CARGO_BIN_EXE_aif-backend")
         .or(option_env!("CARGO_BIN_EXE_aif_backend"))
-        .unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../target/debug/aif-backend"))
+        .unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/target/debug/aif-backend"))
         .to_string()
 }
 
