@@ -19,3 +19,4 @@ target/
 *.pptx
 _expand_deck.py
 _tmp_inspect.py
+/docs/superpowers

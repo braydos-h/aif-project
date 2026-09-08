@@ -21,7 +21,7 @@ pub struct Extras {
 pub fn parse_structured_response(text: &str) -> Option<(f64, Extras)> {
     // Find the first {...} block in the text (no nesting — same as the
     // Python regex `\{[^{}]*\}`).
-    let start = find_balanced(text);
+    let start = find_first_braceless_block(text);
     if let Some((open, close)) = start {
         let candidate = &text[open..=close];
         if let Ok(value) = serde_json::from_str::<Value>(candidate) {
@@ -50,17 +50,21 @@ pub fn parse_structured_response(text: &str) -> Option<(f64, Extras)> {
     extract_weight_from_text(text).map(|w| (w, Extras::default()))
 }
 
-/// Find the first `{...}` block with no nesting inside. Returns byte offsets
-/// of the opening and closing brace, or None.
-fn find_balanced(text: &str) -> Option<(usize, usize)> {
+/// Find the first `{...}` block containing no inner braces, mirroring
+/// Python `re.search(r"\{[^{}]*\}")`. Returns byte offsets of the braces.
+fn find_first_braceless_block(text: &str) -> Option<(usize, usize)> {
     let bytes = text.as_bytes();
-    let mut open = None;
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == b'{' && open.is_none() {
-            open = Some(i);
-        } else if b == b'}' && open.is_some() {
-            return Some((open.unwrap(), i));
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            if let Some(rel) = bytes[i + 1..].iter().position(|&b| b == b'}') {
+                let close = i + 1 + rel;
+                if !bytes[i + 1..close].contains(&b'{') {
+                    return Some((i, close));
+                }
+            }
         }
+        i += 1;
     }
     None
 }
@@ -88,9 +92,7 @@ pub fn extract_weight_from_text(text: &str) -> Option<f64> {
         let kg_idx = search_from + kg_idx;
         // Skip whitespace backwards.
         let mut end = kg_idx;
-        while end > 0 && text.as_bytes()[end - 1].is_ascii_whitespace() {
-            end -= 1;
-        }
+        end = skip_kg_space_back(text.as_bytes(), end);
         if let Some(num_start) = number_before(text, end) {
             return Some(parse_number(&text[num_start..end]));
         }
@@ -127,7 +129,46 @@ fn number_before(text: &str, end: usize) -> Option<usize> {
     if seen_dot && end - i == 1 {
         return None;
     }
+    if !is_kg_number(&text[i..end]) {
+        return None;
+    }
     Some(i)
+}
+
+/// True when `s` matches Python's kg-number shape: digits, optionally
+/// followed by one dot with digits on both sides.
+fn is_kg_number(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    if !bytes[0].is_ascii_digit() || !bytes[bytes.len() - 1].is_ascii_digit() {
+        return false;
+    }
+    let mut dots = 0;
+    for &b in bytes {
+        if b == b'.' {
+            dots += 1;
+        } else if !b.is_ascii_digit() {
+            return false;
+        }
+    }
+    dots <= 1
+}
+
+/// Step `end` backwards over one whitespace unit (ASCII whitespace,
+/// vertical tab, or UTF-8 NBSP). Byte-index safe: only steps on known
+/// boundaries.
+fn skip_kg_space_back(bytes: &[u8], mut end: usize) -> usize {
+    loop {
+        if end >= 2 && bytes[end - 2..end] == [0xC2, 0xA0] {
+            end -= 2;
+        } else if end >= 1 && (bytes[end - 1].is_ascii_whitespace() || bytes[end - 1] == 0x0B) {
+            end -= 1;
+        } else {
+            return end;
+        }
+    }
 }
 
 /// Parse a plain decimal number (integer or with a fractional part).
@@ -218,6 +259,41 @@ mod tests {
         assert_eq!(
             extract_weight_from_text("around 730 in 730.5 kg range"),
             Some(730.5)
+        );
+    }
+
+    #[test]
+    fn nested_json_matches_python_innermost_block() {
+        // Python: re.search(r"\{[^{}]*\}") finds the inner block -> 600.0
+        let (weight, _) =
+            parse_structured_response(r#"{"weight_kg": 100, "nested": {"weight_kg": 600}}"#).unwrap();
+        assert_eq!(weight, 600.0);
+    }
+
+    #[test]
+    fn leading_dot_and_trailing_dot_match_python() {
+        // Python kg-regex needs \d+(\.\d+)?: ".5 kg" matches "5 kg" -> 5.0
+        assert_eq!(
+            extract_weight_from_text("10 and .5 kg"),
+            Some(5.0)
+        );
+        // "5. kg" is not a kg-match; bare-number fallback -> 10.0
+        assert_eq!(
+            extract_weight_from_text("10 and 5. kg"),
+            Some(10.0)
+        );
+    }
+
+    #[test]
+    fn nbsp_and_vt_count_as_space_before_kg() {
+        // NBSP (U+00A0) between number and "kg", and vertical tab
+        assert_eq!(
+            extract_weight_from_text("10 450\u{a0}kg"),
+            Some(450.0)
+        );
+        assert_eq!(
+            extract_weight_from_text("10 450\x0bkg"),
+            Some(450.0)
         );
     }
 }
