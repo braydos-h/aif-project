@@ -33,7 +33,6 @@ class SimpleWebUiTests(unittest.TestCase):
         html = _read("index.html")
         for gone in (
             "advanced-settings",
-            "demo-button",
             "api-key-input",
             "prompt-input",
             "backend-select",
@@ -41,6 +40,27 @@ class SimpleWebUiTests(unittest.TestCase):
             "ollama-url-input",
         ):
             self.assertNotIn(gone, html)
+
+    def test_index_has_demo_picker_capture_and_disclaimer(self):
+        html = _read("index.html")
+        self.assertIn('id="demo-select"', html)
+        self.assertIn('id="demo-button"', html)
+        self.assertIn('capture="environment"', html)
+        self.assertIn("not a scale or vet advice", html)
+        self.assertIn("local_fallback", html)
+
+    def test_js_demo_picker_uses_image_url_and_matches_20mb_limit(self):
+        js = _read("app.js")
+        self.assertIn("demo-select", js)
+        self.assertIn("/demo-cows", js)
+        self.assertIn("image_url", js)
+        self.assertIn("20 * 1024 * 1024", js)
+        self.assertNotIn("15 * 1024 * 1024", js)
+
+    def test_css_has_touch_targets_and_print_rules(self):
+        css = _read("styles.css")
+        self.assertIn("min-height: 44px", css)
+        self.assertIn("@media print", css)
 
     def test_js_posts_estimates_and_renders_safely(self):
         js = _read("app.js")

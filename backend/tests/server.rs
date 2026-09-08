@@ -222,7 +222,7 @@ fn estimate_weight_with_image_url() {
 #[test]
 fn estimate_weight_uses_default_prompt() {
     let server = setup_none();
-    let (status, body, _) = post_json(&server, &format!(r#"{{"image_base64": "{}"}}"#, png_b64()));
+    let (status, _, body) = post_json(&server, &format!(r#"{{"image_base64": "{}"}}"#, png_b64()));
     assert_eq!(status, 200);
     assert!(body["prompt_used"].as_str().is_some_and(|p| p.contains("weight_kg")));
 }
@@ -230,7 +230,7 @@ fn estimate_weight_uses_default_prompt() {
 #[test]
 fn response_includes_lbs() {
     let server = setup_none();
-    let (status, body, _) = post_json(&server, &format!(r#"{{"image_base64": "{}"}}"#, png_b64()));
+    let (status, _, body) = post_json(&server, &format!(r#"{{"image_base64": "{}"}}"#, png_b64()));
     assert_eq!(status, 200);
     let kg = body["estimated_weight_kg"].as_f64().unwrap();
     let lbs = body["estimated_weight_lbs"].as_f64().unwrap();
@@ -560,7 +560,6 @@ fn index_stays_simple_without_settings_clutter() {
     let html = web_file("index.html");
     for gone in [
         "advanced-settings",
-        "demo-button",
         "api-key-input",
         "prompt-input",
         "backend-select",
