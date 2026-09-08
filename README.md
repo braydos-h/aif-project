@@ -14,23 +14,14 @@ Build the Rust server, then start the application:
 
 ```powershell
 cargo build --release --manifest-path backend/Cargo.toml
-python app.py
-```
-
-Open <http://127.0.0.1:8080/>. The launcher prints the WebUI and API URLs.
-
-For a compatibility shortcut that opens the browser automatically:
-
-```powershell
-python gui.py
-```
-
-`gui.py`, `start_gui.bat`, and `start_gui.ps1` are thin launchers only; the
-supported UI is the Rust-served WebUI. The direct Rust command is also useful:
-
-```powershell
 backend\target\release\aif-backend.exe --host 127.0.0.1 --port 8080
 ```
+
+Open <http://127.0.0.1:8080/>. The server prints the listening URL on stdout.
+
+For a shortcut that starts the server and opens the browser automatically,
+double-click `start_gui.bat` (or run `start_gui.ps1`); they launch the same
+binary and open the WebUI. The supported UI is the Rust-served WebUI.
 
 CLI usage: `aif-backend [--host HOST] [--port PORT]`. Both `--flag value`
 and `--flag=value` forms work; `--help` prints usage and exits 0, while
@@ -66,10 +57,10 @@ Rust aif-backend ── /estimate-weight ── Ollama Cloud or local fallback
        └──────────── /demo-cows and compiled static assets
 ```
 
-The Python package remains a dependency-free estimator/configuration library
-for scripts and tests. It is no longer a desktop UI. The Rust implementation
-is the main application server and keeps the existing deterministic fallback,
-image validation, caching, retry behavior, request IDs, and error codes.
+The Rust implementation is the whole application server and keeps the
+deterministic fallback, image validation, caching, retry behavior, request
+IDs, and error codes. There is no Python runtime: the backend, the WebUI,
+and the tests are all Rust (plus plain browser HTML/CSS/JavaScript).
 
 ## API reference
 
@@ -166,30 +157,25 @@ request, making it suitable for local demos and tests.
 
 ## Development and tests
 
-Requirements are Python 3.11+ for the launcher/tests and Rust stable for the
-backend. The frontend is plain HTML/CSS/JavaScript and has no package install
-step.
+Requirements are Rust stable for the backend. The frontend is plain
+HTML/CSS/JavaScript and has no package install step.
 
 ```powershell
 cargo fmt --manifest-path backend/Cargo.toml
 cargo test --manifest-path backend/Cargo.toml
 cargo build --release --manifest-path backend/Cargo.toml
-python -m unittest discover -s tests -v
-ruff check .
 ```
 
-The HTTP tests start the release Rust binary on a free local port. Set
-`AIF_BACKEND_BIN` to override the binary path when needed.
+The integration tests (`backend/tests/server.rs`) spawn the backend binary
+on a free local port over real sockets. Set `AIF_BACKEND_BIN` to override
+the binary path when needed.
 
 ## Repository layout
 
 ```text
 backend/src/       Rust HTTP server, config, validation, parsing, Ollama, cache
+backend/tests/     Real-HTTP integration tests + static WebUI guards
 web/               Rust-served WebUI assets
 cows/              Approved bundled demo images
-aif/config.py      Python defaults and .env loader
-aif/estimator.py   Reusable Python estimator and image helpers
-app.py             Rust backend launcher
-gui.py             Legacy launcher that opens the WebUI
-tests/             Python HTTP, estimator, config, launcher, and WebUI tests
+start_gui.bat/.ps1 Launch the release binary and open the WebUI in a browser
 ```

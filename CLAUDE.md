@@ -2,9 +2,9 @@
 
 This repository is a Rust-served local WebUI/API for estimating cow weight.
 The browser assets live in `web/`; the threaded Rust server lives in
-`backend/`; Python in `aif/` is a reusable estimator/configuration library.
-`app.py` launches the backend and `gui.py` is only a browser-opening
-compatibility launcher.
+`backend/`. There is no Python runtime: `start_gui.bat` / `start_gui.ps1`
+launch the release binary and open the WebUI, and the tests live in
+`backend/tests/`.
 
 Follow [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md). In
 particular:
@@ -24,6 +24,4 @@ Build and test with:
 ```bash
 cargo build --release --manifest-path backend/Cargo.toml
 cargo test --manifest-path backend/Cargo.toml
-python -m unittest discover -s tests -v
-ruff check .
 ```

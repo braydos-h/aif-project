@@ -1,14 +1,12 @@
 name: CI
 
 # Run the full test suite on every commit and pull request.
-# Covers the whole app: Rust backend (fmt/clippy/tests/build) + Python
-# package (ruff + unittest including real-HTTP Rust-binary tests) + WebUI
-# JS syntax check.  Mirrors the commands in CONTRIBUTING.md / AGENTS.md:
+# Covers the Rust backend (fmt/clippy/tests/build including real-HTTP
+# integration tests) + WebUI JS syntax check.  Mirrors the commands in
+# CONTRIBUTING.md / AGENTS.md:
 #   cargo fmt --check --manifest-path backend/Cargo.toml
 #   cargo test --manifest-path backend/Cargo.toml
 #   cargo build --release --manifest-path backend/Cargo.toml
-#   ruff check .
-#   python -m unittest discover -s tests -v
 on:
   push:
   pull_request:
@@ -24,7 +22,7 @@ permissions:
 
 jobs:
   test:
-    name: test (${{ matrix.os }} / py${{ matrix.python-version }})
+    name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     defaults:
@@ -34,17 +32,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -67,24 +58,12 @@ jobs:
         continue-on-error: true
 
       - name: Run Rust tests
+        # Includes the real-HTTP integration tests in backend/tests/server.rs
+        # (spawned binary + static WebUI guards).
         run: cargo test --manifest-path backend/Cargo.toml
 
       - name: Build Rust backend (release)
         run: cargo build --release --manifest-path backend/Cargo.toml
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Lint Python (ruff)
-        run: ruff check .
-
       - name: Validate WebUI syntax
         run: node --check web/app.js
-
-      - name: Run Python tests
-        # Requires the release binary built in the previous step.
-        # tests/test_server.py will locate backend/target/release/aif-backend
-        # (or .exe on Windows) or respect AIF_BACKEND_BIN if set.
-        run: python -m unittest discover -s tests -v

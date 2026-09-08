@@ -15,11 +15,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -28,9 +23,6 @@ jobs:
 
       - name: Build Rust backend (release)
         run: cargo build --release --manifest-path backend/Cargo.toml
-
-      - name: Run tests
-        run: python -m unittest discover -s tests -v
 
       - name: Upload backend to release
         uses: softprops/action-gh-release@v2

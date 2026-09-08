@@ -11,9 +11,10 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and common changes.
 ## What this is
 
 Cow Weight Estimator is a Rust HTTP server that also serves a static browser
-WebUI. The Python package is a reusable, dependency-free estimator/config
-library and is not the application UI. `app.py` starts the Rust binary;
-`gui.py` is a compatibility launcher that opens the same WebUI.
+WebUI. There is no Python runtime — the backend, the tests, and the launch
+path are all Rust (plus plain browser HTML/CSS/JavaScript).
+`start_gui.bat` / `start_gui.ps1` launch the release binary and open the
+WebUI in a browser.
 
 Important paths:
 
@@ -26,9 +27,7 @@ Important paths:
 - `backend/src/fallback.rs` — deterministic SHA-256-derived offline estimate.
 - `backend/src/cache.rs` — in-memory TTL cache.
 - `backend/src/ollama.rs` — Ollama client, bearer auth, and retry policy.
-- `aif/estimator.py` — reusable Python estimator and image helpers.
-- `aif/config.py` — Python defaults and stdlib `.env` loader.
-- `tests/test_server.py` — real HTTP tests against the Rust binary.
+- `backend/tests/server.rs` — real HTTP integration tests + static WebUI guards.
 
 ## Backend behavior
 
@@ -36,7 +35,6 @@ The supported backends are `ollama` and `none`. Ollama uses
 `AIF_OLLAMA_URL`, `AIF_AI_MODEL`, and `OLLAMA_API_KEY`; the default model is
 `gemma4:31b-cloud`. The `none` backend returns a deterministic 250–900 kg
 placeholder with `source == "local_fallback"` and performs no network call.
-Rust and Python fallback math must remain behaviorally identical.
 
 The server routes are:
 
@@ -63,18 +61,16 @@ or shared server state. Never log API keys or return them in errors/info.
 
 ```bash
 cargo build --release --manifest-path backend/Cargo.toml
-python app.py
+./backend/target/release/aif-backend --host 127.0.0.1 --port 8080
 ```
 
 Then visit `http://127.0.0.1:8080/`.
 
 ```bash
 cargo test --manifest-path backend/Cargo.toml
-python -m unittest discover -s tests -v
-ruff check .
 ```
 
-The Python HTTP tests require the release backend binary first and honor
+The integration tests spawn the binary on a free port and honor
 `AIF_BACKEND_BIN`.
 
 ## Testing/security expectations

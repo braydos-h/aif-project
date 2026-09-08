@@ -21,20 +21,6 @@ function Install-Winget {
 
 Install-Winget
 
-if (-not (Test-Command 'python')) {
-    Write-Host 'Python not found - installing Python 3.12 via winget...'
-    winget install --silent --accept-package-agreements --accept-source-agreements `
-        --id Python.Python.3.12 --scope user
-    Refresh-Path
-}
-if (-not (Test-Command 'python')) {
-    Write-Host 'Error: Python was not found after install. Open a new terminal and rerun this script.'
-    Read-Host -Prompt 'Press Enter to exit'
-    exit 1
-}
-$pyVer = python --version
-Write-Host "Using $pyVer"
-
 if (-not (Test-Command 'cargo')) {
     Write-Host 'Rust not found - installing via winget...'
     winget install --silent --accept-package-agreements --accept-source-agreements `

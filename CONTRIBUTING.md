@@ -1,7 +1,7 @@
 # Contributing
 
-The project is a Rust-served local WebUI/API with a small dependency-free
-Python estimator library. Read [AGENTS.md](AGENTS.md) for repository-specific
+The project is a Rust-served local WebUI/API with no Python runtime.
+Read [AGENTS.md](AGENTS.md) for repository-specific
 agent rules and [README.md](README.md) for the user/API documentation.
 
 ## Ground rules
@@ -11,7 +11,7 @@ agent rules and [README.md](README.md) for the user/API documentation.
 - Keep HTTP behavior in Rust. The server has no async runtime or web
   framework; it uses `std::net` with one thread per connection.
 - The Rust dependencies are `ureq` with rustls, `serde_json`, and `sha2`.
-  Python runtime code remains standard-library-only.
+  Integration tests use only `std` plus `serde_json` (already a dependency).
 - Preserve image magic-byte validation, request body limits, CORS support,
   request IDs, structured error codes, and secret redaction.
 - Render user/model text safely. The WebUI must use `textContent` or DOM node
@@ -26,14 +26,13 @@ agent rules and [README.md](README.md) for the user/API documentation.
 | Task | Command |
 | --- | --- |
 | Build the server | `cargo build --release --manifest-path backend/Cargo.toml` |
-| Run the application | `python app.py` |
-| Run the browser-opening compatibility launcher | `python gui.py` |
-| Rust tests | `cargo test --manifest-path backend/Cargo.toml` |
-| Python tests | `python -m unittest discover -s tests -v` |
-| Lint | `ruff check .` |
+| Run the application | `backend/target/release/aif-backend --host 127.0.0.1 --port 8080` |
+| Run the browser-opening launcher | `start_gui.bat` (or `start_gui.ps1`) |
+| Rust tests (unit + HTTP integration) | `cargo test --manifest-path backend/Cargo.toml` |
+| Lint (format check) | `cargo fmt --manifest-path backend/Cargo.toml -- --check` |
 
 Visit `http://127.0.0.1:8080/` after starting the server. `AIF_BACKEND_BIN`
-overrides the binary used by `app.py` and the HTTP tests.
+overrides the binary used by the integration tests.
 
 ## Repository layout
 
@@ -49,10 +48,8 @@ backend/src/
 └── main.rs         --host/--port entry point
 web/                index.html, styles.css, app.js
 cows/               approved demo images compiled into the server
-aif/                Python config and reusable estimator library
-app.py              Rust launcher
-gui.py              legacy WebUI launcher
-tests/              Python HTTP, estimator, config, launcher, and WebUI tests
+backend/tests/      real-HTTP integration tests and static WebUI guards
+start_gui.bat/.ps1  launch the release binary and open the WebUI
 ```
 
 ## Adding a WebUI feature
@@ -66,7 +63,7 @@ tests/              Python HTTP, estimator, config, launcher, and WebUI tests
    request data.
 4. If an API route is needed, add an explicit `(method, path)` match in
    `backend/src/http.rs`. Do not add arbitrary static file serving.
-5. Add an HTTP-level test in `tests/test_server.py` for the status, content
+5. Add an HTTP-level test in `backend/tests/server.rs` for the status, content
    type, response shape, and security boundary.
 
 ## Adding an API field or option
@@ -85,6 +82,6 @@ embedded with `include_bytes!`, which keeps the release binary self-contained.
 
 ## Before finishing
 
-Run the Rust tests, release build, Python tests, and ruff. Inspect `git diff`
+Run the Rust tests, release build, and `cargo fmt --check`. Inspect `git diff`
 for unrelated changes. Append a dated summary to `commits.md`; append only —
 never rewrite or delete earlier entries.

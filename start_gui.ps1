@@ -1,29 +1,13 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 
-$appPath = Join-Path $PSScriptRoot 'app.py'
-$guiPath = Join-Path $PSScriptRoot 'gui.py'
-if (-not (Test-Path -LiteralPath $appPath) -or -not (Test-Path -LiteralPath $guiPath)) {
-    Write-Host "Error: WebUI launcher files not found in `"$PSScriptRoot`""
-    Write-Host 'Make sure the script stays next to the project files.'
+$backend = Join-Path $PSScriptRoot 'backend\target\release\aif-backend.exe'
+if (-not (Test-Path -LiteralPath $backend)) {
+    Write-Host "Error: backend binary not found at `"$backend`""
+    Write-Host 'Build it with: cargo build --release --manifest-path backend\Cargo.toml'
     Read-Host -Prompt 'Press Enter to exit'
     exit 1
 }
 
-$pythonw = Get-Command pythonw.exe -ErrorAction SilentlyContinue
-if ($pythonw) {
-    Start-Process -FilePath $pythonw.Source -ArgumentList "`"$guiPath`""
-    exit 0
-}
-
-$python = Get-Command python.exe -ErrorAction SilentlyContinue
-if ($python) {
-    Start-Process -FilePath $python.Source -ArgumentList "`"$guiPath`""
-    exit 0
-}
-
-Write-Host 'Error: Python was not found on PATH.'
-Write-Host 'Install Python 3.8+ from https://www.python.org/downloads/'
-Write-Host 'and make sure "Add python.exe to PATH" is checked.'
-Read-Host -Prompt 'Press Enter to exit'
-exit 1
+Start-Process -FilePath $backend -ArgumentList '--host', '127.0.0.1', '--port', '8080'
+Start-Process -FilePath 'http://127.0.0.1:8080/'

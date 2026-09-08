@@ -2,29 +2,14 @@
 setlocal
 cd /d "%~dp0"
 
-if not exist "app.py" (
-    echo Error: app.py not found in "%~dp0"
-    echo Make sure the batch file stays next to the project files.
+set "BACKEND=%~dp0backend\target\release\aif-backend.exe"
+if not exist "%BACKEND%" (
+    echo Error: backend binary not found at "%BACKEND%"
+    echo Build it with: cargo build --release --manifest-path backend\Cargo.toml
     pause
     exit /b 1
 )
 
-set "PYTHONW="
-for %%P in (pythonw.exe) do set "PYTHONW=%%~$PATH:P"
-if defined PYTHONW (
-    start "Cow Weight Estimator WebUI" "%PYTHONW%" "%~dp0gui.py"
-    exit /b 0
-)
-
-set "PYTHON="
-for %%P in (python.exe) do set "PYTHON=%%~$PATH:P"
-if defined PYTHON (
-    start "Cow Weight Estimator WebUI" "%PYTHON%" "%~dp0gui.py"
-    exit /b 0
-)
-
-echo Error: Python was not found on PATH.
-echo Install Python 3.8+ from https://www.python.org/downloads/
-echo and make sure "Add python.exe to PATH" is checked.
-pause
-exit /b 1
+start "Cow Weight Estimator WebUI" "%BACKEND%" --host 127.0.0.1 --port 8080
+start "" "http://127.0.0.1:8080/"
+exit /b 0

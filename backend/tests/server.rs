@@ -19,7 +19,10 @@ fn binary_path() -> String {
     }
     option_env!("CARGO_BIN_EXE_aif-backend")
         .or(option_env!("CARGO_BIN_EXE_aif_backend"))
-        .unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/target/debug/aif-backend"))
+        .unwrap_or(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/target/debug/aif-backend"
+        ))
         .to_string()
 }
 
@@ -73,8 +76,8 @@ impl Drop for TestServer {
 
 type Headers = HashMap<String, String>;
 
-/// One raw HTTP exchange. `body` is sent verbatim; pass `Some(0)` length
-/// handling via `content_len` when the body is empty but headers are needed.
+/// One raw HTTP exchange. `body` is sent verbatim with an explicit
+/// `Content-Length` unless the caller already supplied one.
 fn http_request(
     method: &str,
     path: &str,
@@ -143,18 +146,21 @@ fn json_header() -> (String, String) {
 }
 
 fn post_json(server: &TestServer, payload: &str) -> (u16, Headers, serde_json::Value) {
-    let (status, headers, body) =
-        http_request("POST", "/estimate-weight", server.port, &[json_header()], payload.as_bytes())
-            .unwrap();
-    let json: serde_json::Value =
-        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    let (status, headers, body) = http_request(
+        "POST",
+        "/estimate-weight",
+        server.port,
+        &[json_header()],
+        payload.as_bytes(),
+    )
+    .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
     (status, headers, json)
 }
 
 fn get_json(server: &TestServer, path: &str) -> (u16, Headers, serde_json::Value) {
     let (status, headers, body) = http_request("GET", path, server.port, &[], b"").unwrap();
-    let json: serde_json::Value =
-        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
     (status, headers, json)
 }
 
@@ -224,7 +230,9 @@ fn estimate_weight_uses_default_prompt() {
     let server = setup_none();
     let (status, _, body) = post_json(&server, &format!(r#"{{"image_base64": "{}"}}"#, png_b64()));
     assert_eq!(status, 200);
-    assert!(body["prompt_used"].as_str().is_some_and(|p| p.contains("weight_kg")));
+    assert!(body["prompt_used"]
+        .as_str()
+        .is_some_and(|p| p.contains("weight_kg")));
 }
 
 #[test]
@@ -270,8 +278,14 @@ fn missing_image_returns_bad_request() {
 #[test]
 fn missing_body_returns_bad_request() {
     let server = setup_none();
-    let (status, _, body) =
-        http_request("POST", "/estimate-weight", server.port, &[json_header()], b"").unwrap();
+    let (status, _, body) = http_request(
+        "POST",
+        "/estimate-weight",
+        server.port,
+        &[json_header()],
+        b"",
+    )
+    .unwrap();
     let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(status, 400);
     assert_eq!(body["code"], "missing_body");
@@ -280,9 +294,14 @@ fn missing_body_returns_bad_request() {
 #[test]
 fn invalid_json_returns_bad_request() {
     let server = setup_none();
-    let (status, _, raw) =
-        http_request("POST", "/estimate-weight", server.port, &[json_header()], b"not json")
-            .unwrap();
+    let (status, _, raw) = http_request(
+        "POST",
+        "/estimate-weight",
+        server.port,
+        &[json_header()],
+        b"not json",
+    )
+    .unwrap();
     let body: serde_json::Value = serde_json::from_slice(&raw).unwrap();
     assert_eq!(status, 400);
     assert_eq!(body["code"], "invalid_json");
@@ -300,10 +319,7 @@ fn estimation_failure_returns_bad_gateway() {
 #[test]
 fn invalid_image_returns_bad_request() {
     // Reach image validation (ollama + key) with non-image bytes.
-    let server = TestServer::new(&[
-        ("AIF_AI_BACKEND", "ollama"),
-        ("OLLAMA_API_KEY", "test-key"),
-    ]);
+    let server = TestServer::new(&[("AIF_AI_BACKEND", "ollama"), ("OLLAMA_API_KEY", "test-key")]);
     let (status, _, body) = post_json(&server, r#"{"image_base64": "QUJD"}"#);
     assert_eq!(status, 400);
     assert_eq!(body["code"], "invalid_image");
@@ -329,7 +345,10 @@ fn request_level_overrides_are_optional() {
 #[test]
 fn unsupported_runtime_backend_is_rejected() {
     let server = setup_none();
-    let payload = format!(r#"{{"image_base64": "{}", "backend": "unknown"}}"#, png_b64());
+    let payload = format!(
+        r#"{{"image_base64": "{}", "backend": "unknown"}}"#,
+        png_b64()
+    );
     let (status, _, body) = post_json(&server, &payload);
     assert_eq!(status, 400);
     assert_eq!(body["code"], "invalid_options");
@@ -351,7 +370,9 @@ fn invalid_runtime_ollama_url_is_rejected() {
 fn truncated_body_returns_400_json() {
     let server = setup_none();
     let mut stream = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
     stream
         .write_all(
             b"POST /estimate-weight HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"",
@@ -361,7 +382,11 @@ fn truncated_body_returns_400_json() {
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).unwrap();
     let text = String::from_utf8_lossy(&raw);
-    assert!(text.starts_with("HTTP/1.1 400"), "got: {}", &text[..text.len().min(60)]);
+    assert!(
+        text.starts_with("HTTP/1.1 400"),
+        "got: {}",
+        &text[..text.len().min(60)]
+    );
     let body_start = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
     let body: serde_json::Value = serde_json::from_slice(&raw[body_start..]).unwrap();
     assert!(body.get("request_id").is_some());
@@ -412,7 +437,13 @@ fn concurrent_requests_all_succeed() {
         let port = server.port;
         handles.push(std::thread::spawn(move || {
             let payload = format!(r#"{{"image_url": "https://example.com/cow-{}.jpg"}}"#, i);
-            http_request("POST", "/estimate-weight", port, &[json_header()], payload.as_bytes())
+            http_request(
+                "POST",
+                "/estimate-weight",
+                port,
+                &[json_header()],
+                payload.as_bytes(),
+            )
         }));
     }
     for h in handles {
@@ -496,8 +527,8 @@ fn unknown_get_returns_404() {
 #[test]
 fn path_traversal_attempt_is_not_served() {
     let server = setup_none();
-    let (status, _, _) = http_request("GET", "/%2e%2e/%2e%2e/Cargo.toml", server.port, &[], b"")
-        .unwrap();
+    let (status, _, _) =
+        http_request("GET", "/%2e%2e/%2e%2e/Cargo.toml", server.port, &[], b"").unwrap();
     assert_eq!(status, 404);
 }
 
@@ -566,7 +597,11 @@ fn index_stays_simple_without_settings_clutter() {
         "model-input",
         "ollama-url-input",
     ] {
-        assert!(!html.contains(gone), "index.html should not contain {}", gone);
+        assert!(
+            !html.contains(gone),
+            "index.html should not contain {}",
+            gone
+        );
     }
 }
 
@@ -588,7 +623,6 @@ fn css_stays_small_and_supports_dark_mode() {
     let lines = css.lines().filter(|l| !l.trim().is_empty()).count();
     assert!(lines <= 200, "stylesheet grew to {} lines", lines);
 }
-
 
 #[test]
 fn index_has_demo_picker_capture_and_disclaimer() {
