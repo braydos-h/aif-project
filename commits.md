@@ -677,3 +677,13 @@
 - `http.rs`: truncated bodies return 400 JSON with request id; request IDs mix pid + atomic counter.
 - `main.rs`/`config.rs`: strict `--host`/`--port` parsing (`--flag=value`, `--help`, nonzero exit on misuse); `.env` probed in cwd → exe dir → source root.
 - Tests: Rust unit tests per fix + 2 HTTP regression tests; full gate green.
+
+## 2026-09-08 13:35 (session: quick-wins batch — 20MB align, demo picker, field UX)
+- **Context:** brainstorming sweep across 6 dimensions (WebUI, backend, estimator, field/offline, devx, trust) produced a ranked pool; user picked the Quick wins batch.
+- **Change (`web/` only, no new routes/deps):**
+  - `web/app.js`: `MAX_FILE_BYTES` 15MB → 20MB to match `MAX_BODY_BYTES` in `backend/src/http.rs`; generalized `postEstimate(base64)` → `requestEstimate(payload)` so the demo picker reuses it via `image_url`; added `loadDemos()` (populates `<select>` from `GET /demo-cows` with `textContent`-only options), `pushHistory()` (single result-render path shared by batch + demo), `runDemo()` (posts `image_url: /demo-cows/{id}`, same-origin URL + `encodeURIComponent`).
+  - `web/index.html`: `capture="environment"` on `#image-input`, demo-cow `<select>` + button section, static disclaimer footer (estimate-only, check `ollama` vs `local_fallback` source).
+  - `web/styles.css`: 44px min touch targets on file/select/button, `@media print` hides controls (91 non-blank lines, still under the 200 cap).
+  - `tests/test_webui.py`: new guards for demo picker/capture/disclaimer, 20MB constant parity, touch-target + print CSS; dropped `demo-button` from the forbidden-ids list.
+- **Verification:** `node --check web/app.js` OK; `python -m unittest tests.test_webui` 7/7; full `python -m unittest discover -s tests` 68 pass; `cargo test` 66 pass (33 lib + 3 + 30 integration). No `innerHTML`/`localStorage`/`sessionStorage`.
+- **Note:** shared tree with a parallel session doing Python removal; restored accidentally staged `aif/`+`tests/` deletions, coordinated via SendMessage. `cargo fmt --check` fails on peer-owned `backend/tests/server.rs` — left untouched.

@@ -140,17 +140,7 @@
         continue;
       }
       try {
-        const result = await requestEstimate({ image_base64: await readAsDataUrl(file) });
-        const kg = formatWeight(result.estimated_weight_kg);
-        const lbs = typeof result.estimated_weight_lbs === "number"
-          ? formatWeight(result.estimated_weight_lbs)
-          : null;
-        const source = typeof result.source === "string" ? result.source : "unknown";
-        const breed = typeof result.breed === "string" && result.breed ? ` · ${result.breed}` : "";
-        showResult(`${file.name}: ${kg} kg`, lbs === null ? `${source}${breed}` : `${lbs} lb · ${source}${breed}`);
-        history.unshift({ filename: file.name, kg, lbs, source });
-        if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
-        renderHistory();
+        pushHistory(file.name, await requestEstimate({ image_base64: await readAsDataUrl(file) }));
         succeeded += 1;
       } catch (error) {
         failed += 1;
