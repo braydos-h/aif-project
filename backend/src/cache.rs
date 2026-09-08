@@ -15,6 +15,14 @@ struct Entry {
     result: Value,
 }
 
+/// Upper bound on cached results; eviction drops expired entries first,
+/// then one arbitrary entry. Bounds remote memory growth from distinct
+/// per-request prompts while keeping the hot path O(1)-ish.
+pub const MAX_CACHE_ENTRIES: usize = 512;
+/// Upper bound on TTL (30 days); larger configured values are clamped so
+/// `Instant + ttl` can never overflow and poison the mutex.
+pub const MAX_CACHE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+
 /// TTL cache of estimation results.
 pub struct Cache {
     ttl: Duration,
@@ -25,9 +33,14 @@ impl Cache {
     /// Create a cache with the given TTL. A TTL of 0 disables caching.
     pub fn new(cache_ttl: u64) -> Cache {
         Cache {
-            ttl: Duration::from_secs(cache_ttl),
+            ttl: Duration::from_secs(cache_ttl.min(MAX_CACHE_TTL_SECS)),
             entries: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Number of entries currently held, including unexpired ones.
+    pub fn len(&self) -> usize {
+        self.entries.lock().unwrap().len()
     }
 
     fn enabled(&self) -> bool {
@@ -56,13 +69,18 @@ impl Cache {
             return;
         }
         let mut entries = self.entries.lock().unwrap();
-        entries.insert(
-            key.to_string(),
-            Entry {
-                expires_at: Instant::now() + self.ttl,
-                result,
-            },
-        );
+        if !entries.contains_key(key) && entries.len() >= MAX_CACHE_ENTRIES {
+            entries.retain(|_, e| Instant::now() <= e.expires_at);
+            if entries.len() >= MAX_CACHE_ENTRIES {
+                if let Some(oldest) = entries.keys().next().cloned() {
+                    entries.remove(&oldest);
+                }
+            }
+        }
+        let expires_at = Instant::now()
+            .checked_add(self.ttl)
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(MAX_CACHE_TTL_SECS));
+        entries.insert(key.to_string(), Entry { expires_at, result });
     }
 }
 
@@ -98,5 +116,23 @@ mod tests {
         }
         drop(entries);
         assert_eq!(cache.get("k"), None);
+    }
+
+    #[test]
+    fn huge_ttl_does_not_panic() {
+        let cache = Cache::new(u64::MAX);
+        cache.put("k", result(1));
+        assert_eq!(cache.get("k"), Some(result(1)));
+    }
+
+    #[test]
+    fn entries_are_capped() {
+        let cache = Cache::new(300);
+        for i in 0..700 {
+            cache.put(&format!("key-{}", i), result(i));
+        }
+        assert!(cache.len() <= 512);
+        // Most recent insert always survives.
+        assert_eq!(cache.get("key-699"), Some(result(699)));
     }
 }

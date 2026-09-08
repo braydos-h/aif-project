@@ -85,7 +85,8 @@ impl Config {
     pub fn from_env() -> Config {
         let cache_ttl = env_or("AIF_CACHE_TTL", &DEFAULT_CACHE_TTL.to_string())
             .parse::<u64>()
-            .unwrap_or(DEFAULT_CACHE_TTL);
+            .unwrap_or(DEFAULT_CACHE_TTL)
+            .min(crate::cache::MAX_CACHE_TTL_SECS);
         let api_key = env::var("OLLAMA_API_KEY").ok().filter(|k| !k.is_empty());
         Config {
             backend: env_or("AIF_AI_BACKEND", "ollama"),
