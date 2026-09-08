@@ -669,3 +669,11 @@
 ## 2026-09-08 (session: Task 5 strict CLI parsing + installed-binary .env lookup)
 - **Change (`backend/src/main.rs`, `backend/src/config.rs` only; `ed4292d`):** new `parse_args` (`--host`/`--port` space + `=` forms, `-h`/`--help` → usage/exit 0, unknown/missing/invalid → stderr + usage/exit 2); new `env_candidates` (cwd → exe-dir → compile root, first file wins) with shared `apply_env_content` parser; deleted duplicated test helper loop. `from_env` TTL clamp untouched.
 - **Verification:** TDD (new tests failed to compile pre-implementation); `cargo test` 36/36 pass; `cargo fmt --check` clean; manual `--help`/bad-flag/bad-port exit codes 0/2/2 confirmed.
+
+## 2026-09-08 — Backend parity + robustness
+- `parse.rs`: JSON-block match, kg-number shape, and NBSP/VT whitespace now mirror `aif/estimator.py` exactly.
+- `cache.rs`/`config.rs`: entry cap (512) + 30-day TTL clamp; huge TTLs can no longer panic/poison the cache.
+- `validate.rs`: over-20 MiB image downloads rejected with `400 invalid_image` instead of truncated-forward.
+- `http.rs`: truncated bodies return 400 JSON with request id; request IDs mix pid + atomic counter.
+- `main.rs`/`config.rs`: strict `--host`/`--port` parsing (`--flag=value`, `--help`, nonzero exit on misuse); `.env` probed in cwd → exe dir → source root.
+- Tests: Rust unit tests per fix + 2 HTTP regression tests; full gate green.

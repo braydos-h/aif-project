@@ -32,6 +32,11 @@ supported UI is the Rust-served WebUI. The direct Rust command is also useful:
 backend\target\release\aif-backend.exe --host 127.0.0.1 --port 8080
 ```
 
+CLI usage: `aif-backend [--host HOST] [--port PORT]`. Both `--flag value`
+and `--flag=value` forms work; `--help` prints usage and exits 0, while
+unknown flags or missing/invalid values print usage and exit nonzero instead
+of silently using defaults.
+
 ## WebUI
 
 The browser app supports:
