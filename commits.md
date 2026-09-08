@@ -660,3 +660,8 @@
 - **Change (`.github/workflows/ci.yml` only):** matrix `python-version` `["3.12"]` → `["3.11", "3.12", "3.13"]` (2 → 6 jobs). No step or behavior changes; YAML re-validated.
 - **Local verification:** workflow YAML parses; non-binary Python tests pass (39 tests OK — `test_server.py` HTTP tests need the release binary, built in CI before that step); cargo unavailable on this box so Rust steps rely on CI.
 - **Skipped:** separate lint/typecheck/security jobs — single test job mirrors CONTRIBUTING.md commands; add only if a specific check proves flaky or slow enough to split out.
+
+## 2026-09-08 (session: sync docs with simplified WebUI)
+- **Context:** `09cbcf8` had already rewritten `web/` to the super-simple batch-upload + history page with `tests/test_webui.py` guards, but `README.md` and `AGENTS.md` still described the retired instrument UI (drag-and-drop, Advanced Settings, demo cows, copy/retry, `Ctrl+Enter`).
+- **Change:** rewrote the README WebUI section to match the simple page (batch selection, sequential estimates, latest-answer + 20-item session history, nothing stored); trimmed the stale `Ctrl+Enter` line from `AGENTS.md`. No code changes; backend untouched.
+- **Verification:** 39 runnable Python tests pass (`test_server.py` HTTP tests need the release binary — no cargo on this box, covered by CI), `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage` in `web/app.js`.

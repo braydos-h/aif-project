@@ -52,7 +52,7 @@ cows/               approved demo images compiled into the server
 aif/                Python config and reusable estimator library
 app.py              Rust launcher
 gui.py              legacy WebUI launcher
-tests/              Python HTTP, estimator, config, and launcher tests
+tests/              Python HTTP, estimator, config, launcher, and WebUI tests
 ```
 
 ## Adding a WebUI feature

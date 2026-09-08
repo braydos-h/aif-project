@@ -36,20 +36,18 @@ backend\target\release\aif-backend.exe --host 127.0.0.1 --port 8080
 
 The browser app supports:
 
-- click-to-browse and drag-and-drop image selection with preview, filename,
-  size checks, replace, and remove;
-- JPEG, PNG, WebP, BMP, and GIF images;
-- Ollama and deterministic `none` backends;
-- runtime model, Ollama URL, API key, and prompt overrides in **Advanced
-  Settings**;
-- copy, retry, request status, request IDs, model response text, and a
-  session-only history of the last 20 successful estimates;
-- bundled demo cows with per-image progress and partial-failure handling;
-- dark-mode support, responsive sizing, keyboard navigation, and
-  `Ctrl+Enter` in the prompt textarea.
+- batch image selection (JPEG, PNG, WebP, BMP, and GIF) with type and size
+  checks;
+- one **Estimate Weight** button that estimates each selected image in turn,
+  showing per-image progress and a final succeeded/failed count;
+- a latest-answer area plus a session-only history of the last 20 successful
+  estimates;
+- live status updates, dark-mode support, and a responsive single-column
+  layout.
 
-Selected files are not uploaded until **Estimate Weight** is pressed. The
-browser does not store API keys or base64 images. Model-provided text is
+Selected files are not uploaded until **Estimate Weight** is pressed. Backend,
+model, and prompt come from the server defaults. The browser stores nothing —
+no `localStorage`, no API keys, no base64 images in history. Dynamic text is
 rendered as text, not HTML.
 
 ## Architecture
@@ -188,5 +186,5 @@ aif/config.py      Python defaults and .env loader
 aif/estimator.py   Reusable Python estimator and image helpers
 app.py             Rust backend launcher
 gui.py             Legacy launcher that opens the WebUI
-tests/             Python HTTP, estimator, config, and launcher tests
+tests/             Python HTTP, estimator, config, launcher, and WebUI tests
 ```

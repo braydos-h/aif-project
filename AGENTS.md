@@ -81,9 +81,8 @@ The Python HTTP tests require the release backend binary first and honor
 
 Dynamic browser values, including model output, filenames, errors, and request
 IDs, must be rendered with `textContent`/DOM properties, never `innerHTML`.
-Do not persist API keys or base64 images in browser storage/history. Keep
-keyboard behavior scoped to the prompt (`Ctrl+Enter` estimates; plain Enter
-creates a newline), preserve focus states/live status messages, and keep the
-UI usable on mobile and dark mode.
+Do not persist API keys or base64 images in browser storage/history. Preserve
+focus states and live status messages, and keep the UI usable on mobile and
+dark mode.
 
 Append the session summary to `commits.md` before finishing.
