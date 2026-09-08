@@ -131,6 +131,20 @@ fn base64_decode_impl(input: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Maximum accepted image download size (mirrors the 20 MiB API body limit).
+pub const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// Reject downloads larger than the image size limit instead of silently
+/// forwarding a truncated prefix to the model.
+pub fn ensure_within_limit(len: usize) -> Result<(), ImageValidationError> {
+    if len > MAX_IMAGE_BYTES {
+        return Err(ImageValidationError(
+            "Image downloaded from URL exceeds 20 MiB limit".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Fetch bytes from an http(s) URL with a 30s timeout and a UA header.
 fn fetch_url(url: &str) -> Result<Vec<u8>, String> {
     let agent = ureq::AgentBuilder::new()
@@ -144,9 +158,10 @@ fn fetch_url(url: &str) -> Result<Vec<u8>, String> {
     let mut buf: Vec<u8> = Vec::new();
     response
         .into_reader()
-        .take(20 * 1024 * 1024)
+        .take((MAX_IMAGE_BYTES + 1) as u64)
         .read_to_end(&mut buf)
         .map_err(|e| format!("Failed to read image from {}: {}", url, e))?;
+    ensure_within_limit(buf.len()).map_err(|e| e.0)?;
     Ok(buf)
 }
 
@@ -258,5 +273,12 @@ mod tests {
         // "!!!" is not valid base64 at all.
         let err2 = to_base64_image("!!!").unwrap_err();
         assert!(err2.0.contains("not valid base64"));
+    }
+
+    #[test]
+    fn over_limit_size_rejected() {
+        assert!(ensure_within_limit(20 * 1024 * 1024).is_ok());
+        let err = ensure_within_limit(20 * 1024 * 1024 + 1).unwrap_err();
+        assert!(err.0.contains("exceeds 20 MiB"));
     }
 }
