@@ -22,7 +22,7 @@ Important paths:
 - `backend/src/http/` — threaded HTTP/1.1 server (`server.rs` listener loop,
   `mod.rs` dispatch, `response.rs` envelopes/headers, `request_id.rs`,
   `assets.rs` static/demo registry, `validation.rs` runtime option checks,
-  `handlers.rs` info/demo routes, `estimate.rs` estimator API).
+  `handlers.rs` info/demo/metrics routes, `estimate.rs` estimator API).
 - `backend/src/config/` — defaults and `Config` (`mod.rs`), `.env` loading
   (`env.rs`), unit conversion (`units.rs`).
 - `backend/src/validate/` — image references (`mod.rs`), base64 codec
@@ -51,10 +51,13 @@ The server routes are:
 - `GET /` → WebUI HTML.
 - `GET /styles.css`, `GET /app.js` → compile-time static assets.
 - `GET /info` → safe application/configuration JSON; never return an API key.
-- `GET /health` → liveness, backend, model, and safe configuration status.
+- `GET /health` → liveness, backend, model, uptime, and live connections.
+- `GET /metrics` → uptime, request totals, live/rejected connections, cache size.
 - `GET /demo-cows`, `GET /demo-cows/{id}` → controlled bundled demo images.
-- `POST /estimate-weight` → existing estimator API.
-- `OPTIONS` → CORS preflight; unknown routes return structured 404 JSON.
+- `POST /estimate-weight` → single estimate (photo, tape, or both).
+- `POST /estimate-batch` → up to 20 estimates in one request.
+- `OPTIONS` → CORS preflight; unknown routes return structured 404 JSON;
+  over-limit bursts return structured 503 `server_busy` JSON.
 
 Static and demo routes are explicit. Never add arbitrary filesystem serving or
 build a filesystem path from a URL segment. Keep the existing body limit,

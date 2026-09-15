@@ -48,7 +48,7 @@ backend/src/
 ├── cache.rs        in-memory TTL result cache
 ├── ollama/         orchestration (mod.rs), transport/retry (client.rs), reply parsing (response.rs), cache keys (cache_key.rs)
 ├── http/           dispatch (mod.rs), server loop (server.rs), responses (response.rs), request ids (request_id.rs),
-│                   static/demo registry (assets.rs), option validation (validation.rs), info/demo (handlers.rs), estimator API (estimate.rs)
+│                   static/demo registry (assets.rs), option validation (validation.rs), info/demo/metrics (handlers.rs), estimator API (estimate.rs)
 └── main.rs         --host/--port entry point
 web/                index.html, styles.css, app.js
 cows/               approved demo images compiled into the server
