@@ -719,3 +719,14 @@
   - `web/styles.css`: secondary style for `unit-toggle` + tips list spacing (100 non-blank lines, under the 200 cap).
   - `backend/tests/server.rs`: new `accuracy_trust_helpers_render_extras_and_warnings` guard for the toggle/tips ids and extras/warning strings plus `textContent`-only check.
 - **Verification:** `cargo test` 75 pass (41 lib + 34 integration), `cargo fmt --check` clean, `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage`.
+
+## 2026-09-15 03:07 UTC (session: WebUI polish — batch + health + history)
+- **Context:** WebUI overwrote batch results to a single latest answer, mixed health status into the progress line, hid model/request IDs, had no pre-estimate file list, no cancel, no demo preview/retry, and history lacked time/kind/clear.
+- **Change (`web/` + small additive backend):**
+  - `web/index.html`: persistent `health-pill` + `backend-label`, `limits-hint`, `file-list` thumbnails, `cancel-button`, `progress` `role=progressbar`, `batch-list`, `demo-preview` + `demo-retry` + `demo-status`, `history-clear`; all prior ids preserved, no settings-clutter ids.
+  - `web/app.js`: file list with `createObjectURL` previews + `revokeObjectURL`, per-file validation summary, batch result list (no overwrite), `aria-valuenow` progress + Cancel via `AbortController`, single `busy` guard across upload/demo, error strings now append `code` + `request` IDs (header `x-request-id` fallback), result meta shows `model` + `request`, history stores time/kind/request/model + Clear button, demo preview + disabled-while-loading + retry, health/info badge separate from `status`, focus moved to `result-area` on done; still `textContent`-only, no storage.
+  - `web/styles.css`: pill/progress/file/batch/demo/history-meta styles, history rows wrap instead of clipping (119 non-blank lines, under 200 cap).
+  - `backend/src/http/response.rs`: `Cache-Control: public, max-age=3600, immutable` + `ETag` (body len) for compiled HTML/CSS/JS/images only; JSON untouched.
+  - `backend/src/fallback.rs`: `none` backend now returns nullable `model`/`confidence`/`breed`/`body_condition_score` to unify schema with `ollama`.
+  - `backend/tests/server.rs`: new guards for health/batch controls, JS batch/health/history strings, static cache headers, fallback nullable extras.
+- **Verification:** `cargo test` 79 pass (41 lib + 38 integration), `cargo fmt --check` clean, `cargo build --release` OK, `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage`.
