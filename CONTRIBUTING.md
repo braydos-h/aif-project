@@ -38,13 +38,16 @@ overrides the binary used by the integration tests.
 
 ```text
 backend/src/
-├── config.rs       .env loader, defaults, and effective Config
-├── validate.rs     base64/data-URI and image magic-byte validation
-├── parse.rs        structured JSON and text weight extraction
+├── args.rs         --host/--port CLI parsing
+├── hash.rs         shared SHA-256 helpers
+├── config/         defaults + Config (mod.rs), .env loading (env.rs), units (units.rs)
+├── validate/       image refs (mod.rs), base64 codec (base64.rs), magic bytes (image.rs), URL fetch (fetch.rs)
+├── parse/          weight extraction (mod.rs), JSON blocks (structured.rs), free text (text.rs)
 ├── fallback.rs     deterministic offline estimate
 ├── cache.rs        in-memory TTL result cache
-├── ollama.rs       Ollama client, bearer auth, and retry policy
-├── http.rs         threaded HTTP server, WebUI routes, API, demos
+├── ollama/         orchestration (mod.rs), transport/retry (client.rs), reply parsing (response.rs), cache keys (cache_key.rs)
+├── http/           dispatch (mod.rs), server loop (server.rs), responses (response.rs), request ids (request_id.rs),
+│                   static/demo registry (assets.rs), option validation (validation.rs), info/demo (handlers.rs), estimator API (estimate.rs)
 └── main.rs         --host/--port entry point
 web/                index.html, styles.css, app.js
 cows/               approved demo images compiled into the server
@@ -62,7 +65,7 @@ start_gui.bat/.ps1  launch the release binary and open the WebUI
    `value`. Never use `innerHTML` for model responses, filenames, errors, or
    request data.
 4. If an API route is needed, add an explicit `(method, path)` match in
-   `backend/src/http.rs`. Do not add arbitrary static file serving.
+   `backend/src/http/mod.rs`. Do not add arbitrary static file serving.
 5. Add an HTTP-level test in `backend/tests/server.rs` for the status, content
    type, response shape, and security boundary.
 
@@ -75,7 +78,7 @@ the field and its error code in README.md, and test both omission and use.
 
 ## Demo images and static assets
 
-Demo images are approved at compile time in `backend/src/http.rs`. If a demo
+Demo images are approved at compile time in `backend/src/http/assets.rs`. If a demo
 is added, give it a fixed ID and MIME type and add it to the controlled list;
 never construct a filesystem path from a URL segment. WebUI assets are also
 embedded with `include_bytes!`, which keeps the release binary self-contained.

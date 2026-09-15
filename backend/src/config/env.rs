@@ -1,28 +1,10 @@
-//! Configuration and constants for the cow weight estimator backend.
+//! `.env` file loading and environment variable helpers.
 //!
-//! All tunables are read from environment variables, falling back to a
-//! `.env` file in the repository root. Values already in the environment
-//! take precedence over `.env` (same contract as `aif/config.py`).
+//! Values already present in the process environment take precedence over
+//! `.env` (same contract as `aif/config.py`).
 
 use std::env;
 use std::path::Path;
-
-pub const DEFAULT_PROMPT: &str =
-    "Estimate this cow's weight in kilograms from the provided image. \
-Reply with ONLY a JSON object of the form \
-{\"weight_kg\": <number>, \"confidence\": <0..1>, \
-\"breed\": <string>, \"body_condition_score\": <1..9>} \
-where confidence is your confidence in the estimate (0..1), breed is your \
-best guess of the breed (or \"unknown\"), and body_condition_score is a \
-1-9 score. Do not include any text outside the JSON object.";
-
-pub const DEFAULT_OLLAMA_URL: &str = "https://ollama.com/api/generate";
-pub const DEFAULT_OLLAMA_MODEL: &str = "gemma4:31b-cloud";
-pub const DEFAULT_CACHE_TTL: u64 = 300;
-pub const OLLAMA_MAX_RETRIES: u32 = 1;
-pub const OLLAMA_RETRY_BACKOFF_SECS: u64 = 1;
-pub const KG_TO_LBS: f64 = 2.20462;
-pub const VERSION: &str = "0.1.0";
 
 /// Locations probed for `.env`, in priority order: current directory,
 /// directory next to the running executable (installed binaries), then
@@ -49,7 +31,7 @@ pub fn env_candidates(filename: &str) -> Vec<std::path::PathBuf> {
 
 /// Parse `.env` content without touching the environment (shared by the
 /// loader and tests).
-fn apply_env_content(content: &str) {
+pub(crate) fn apply_env_content(content: &str) {
     for raw_line in content.lines() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') || !line.contains('=') {
@@ -96,52 +78,13 @@ pub fn env_or(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
-/// Struct holding the effective runtime configuration.
-#[derive(Clone)]
-pub struct Config {
-    pub backend: String,
-    pub ollama_url: String,
-    pub ollama_api_key: Option<String>,
-    pub model: String,
-    pub cache_ttl: u64,
-}
-
-impl Config {
-    /// Build the config from env vars / `.env`, mirroring `CowWeightEstimator`.
-    pub fn from_env() -> Config {
-        let cache_ttl = env_or("AIF_CACHE_TTL", &DEFAULT_CACHE_TTL.to_string())
-            .parse::<u64>()
-            .unwrap_or(DEFAULT_CACHE_TTL)
-            .min(crate::cache::MAX_CACHE_TTL_SECS);
-        let api_key = env::var("OLLAMA_API_KEY").ok().filter(|k| !k.is_empty());
-        Config {
-            backend: env_or("AIF_AI_BACKEND", "ollama"),
-            ollama_url: env_or("AIF_OLLAMA_URL", DEFAULT_OLLAMA_URL),
-            ollama_api_key: api_key,
-            model: env_or("AIF_AI_MODEL", DEFAULT_OLLAMA_MODEL),
-            cache_ttl,
-        }
-    }
-}
-
-/// Convert kilograms to pounds, rounded to one decimal place.
-pub fn kg_to_lbs(kg: f64) -> f64 {
-    round1(kg * KG_TO_LBS)
-}
-
-/// Round a float to one decimal place.
-pub fn round1(value: f64) -> f64 {
-    (value * 10.0).round() / 10.0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn kg_to_lbs_rounds_to_one_decimal() {
-        assert_eq!(kg_to_lbs(612.0), 1349.2);
-        assert_eq!(kg_to_lbs(0.0), 0.0);
+    fn parse_env_file(path: &str) {
+        let content = std::fs::read_to_string(Path::new(path)).unwrap();
+        apply_env_content(&content);
     }
 
     #[test]
@@ -171,10 +114,5 @@ mod tests {
         let c = env_candidates(".env");
         assert!(c.len() >= 2);
         assert_eq!(c[0].file_name().unwrap(), ".env");
-    }
-
-    fn parse_env_file(path: &str) {
-        let content = std::fs::read_to_string(Path::new(path)).unwrap();
-        apply_env_content(&content);
     }
 }

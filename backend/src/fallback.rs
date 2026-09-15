@@ -6,15 +6,14 @@
 use serde_json::{json, Value};
 
 use crate::config::{kg_to_lbs, round1};
+use crate::hash::sha256_bytes;
 
 /// Build the fallback estimate dict for an image reference.
 ///
 /// The digest formula must match `aif/estimator.py`:
 /// `int(sha256(reference).hexdigest()[:8], 16) / 0xFFFFFFFF` → 250 + ratio * 650.
 pub fn estimate_fallback(image_reference: &str, prompt: &str) -> Value {
-    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
-    sha2::Digest::update(&mut hasher, image_reference.as_bytes());
-    let digest = sha2::Digest::finalize(hasher);
+    let digest = sha256_bytes(image_reference.as_bytes());
     // First 8 hex chars of the digest = first 4 bytes.
     let first_4 = &digest[..4];
     let raw: u32 = u32::from_be_bytes(first_4.try_into().unwrap());

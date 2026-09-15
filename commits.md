@@ -698,3 +698,15 @@
 ## 2026-09-08 (session: Linux start.sh launcher)
 - **Change (`start.sh`, new):** POSIX-sh equivalent of `start_gui.bat`/`.ps1` — cds to the script dir, errors out if `backend/target/release/aif-backend` is missing (with the cargo build hint), starts it with `--host 127.0.0.1 --port 8080`, opens the WebUI via `xdg-open`/`open` fallback, and waits on the server PID so Ctrl-C stops it.
 - **Verification:** `chmod +x`, `sh -n` clean.
+
+## 2026-09-15 02:50 UTC (session: god-file split — backend modules)
+- **Context:** `backend/src/http.rs` (581 lines) mixed server loop, routing, all handlers, validation, responses, request IDs, and static assets; `validate.rs`/`parse.rs`/`ollama.rs`/`config.rs` (~180–306 lines each) each covered 2–4 concerns; `main.rs` bundled CLI parsing.
+- **Change (pure move, no behavior change; public API preserved):**
+  - `http.rs` → `http/` (`mod.rs` dispatch + `ServerState`, `server.rs` listener/connection parsing, `response.rs` envelopes/headers/codes, `request_id.rs`, `assets.rs` embedded WebUI + demo registry, `validation.rs` option checks, `handlers.rs` info/demo, `estimate.rs` estimator API).
+  - `validate.rs` → `validate/` (`mod.rs` `to_base64_image`, `base64.rs` codec, `image.rs` magic bytes + size limit, `fetch.rs` URL download).
+  - `parse.rs` → `parse/` (`mod.rs` orchestration + `Extras`, `structured.rs` JSON blocks, `text.rs` free-text fallback).
+  - `ollama.rs` → `ollama/` (`mod.rs` orchestration, `client.rs` POST + retry incl. read-failure retry, `response.rs` reply/error parsing, `cache_key.rs` keys + host; `sha256_hex` re-exported for compat).
+  - `config.rs` → `config/` (`mod.rs` `Config`/defaults, `env.rs` `.env` loading, `units.rs` kg/lbs); `main.rs` CLI parsing → `args.rs`; new `hash.rs` (`sha256_bytes`/`sha256_hex`/`sha256_short_id`) dedupes hasher boilerplate in fallback/ollama/request-id.
+  - Docs: `AGENTS.md` important-paths + `CONTRIBUTING.md` layout and `http/` references updated; `commits.md` history untouched.
+  - Largest backend file now ~170 lines (`parse/text.rs`); every `http/` file ≤ ~140 lines.
+- **Verification:** `cargo test` green (41 unit + 33 integration, incl. real-HTTP and WebUI guards); `cargo fmt --check` clean; release build OK; no warnings. `web/` and `backend/tests/server.rs` untouched (frontend split would break static guards; test harness is sectioned, not mixed-concern).

@@ -19,14 +19,23 @@ WebUI in a browser.
 Important paths:
 
 - `web/index.html`, `web/styles.css`, `web/app.js` — browser UI.
-- `backend/src/http.rs` — threaded HTTP/1.1 server, explicit static/demo
-  routes, API dispatch, runtime option validation, and error responses.
-- `backend/src/config.rs` — defaults, `.env` loading, and server config.
-- `backend/src/validate.rs` — base64/data-URI and image magic-byte validation.
-- `backend/src/parse.rs` — structured JSON and free-text weight parsing.
+- `backend/src/http/` — threaded HTTP/1.1 server (`server.rs` listener loop,
+  `mod.rs` dispatch, `response.rs` envelopes/headers, `request_id.rs`,
+  `assets.rs` static/demo registry, `validation.rs` runtime option checks,
+  `handlers.rs` info/demo routes, `estimate.rs` estimator API).
+- `backend/src/config/` — defaults and `Config` (`mod.rs`), `.env` loading
+  (`env.rs`), unit conversion (`units.rs`).
+- `backend/src/validate/` — image references (`mod.rs`), base64 codec
+  (`base64.rs`), magic-byte checks (`image.rs`), URL fetching (`fetch.rs`).
+- `backend/src/parse/` — weight extraction (`mod.rs` orchestration,
+  `structured.rs` JSON blocks, `text.rs` free-text fallback).
 - `backend/src/fallback.rs` — deterministic SHA-256-derived offline estimate.
 - `backend/src/cache.rs` — in-memory TTL cache.
-- `backend/src/ollama.rs` — Ollama client, bearer auth, and retry policy.
+- `backend/src/ollama/` — Ollama backend (`mod.rs` orchestration,
+  `client.rs` transport/retry, `response.rs` reply parsing,
+  `cache_key.rs` cache keys/URL host).
+- `backend/src/hash.rs` — shared SHA-256 helpers.
+- `backend/src/args.rs` — `--host`/`--port` CLI parsing.
 - `backend/tests/server.rs` — real HTTP integration tests + static WebUI guards.
 
 ## Backend behavior
