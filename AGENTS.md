@@ -71,6 +71,8 @@ The estimate request accepts the existing `image_url`, `image_base64`, and
 values must be type/size/allow-list validated. Use
 a cloned request-specific `Config`; never mutate process environment variables
 or shared server state. Never log API keys or return them in errors/info.
+`image_url` fetches are SSRF-guarded (public hosts only, no redirects,
+20 MiB cap) and return `400 invalid_image` when blocked.
 
 ## Commands
 
