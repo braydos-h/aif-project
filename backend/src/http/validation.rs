@@ -14,6 +14,12 @@ pub(crate) const MAX_PROMPT_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_MODEL_BYTES: usize = 256;
 pub(crate) const MAX_URL_BYTES: usize = 2 * 1024;
 pub(crate) const MAX_API_KEY_BYTES: usize = 4 * 1024;
+/// Max `animal_breed` hint length in bytes.
+pub(crate) const MAX_BREED_BYTES: usize = 64;
+/// Allowed `animal_sex` hints (lowercase; `unknown` means "no hint").
+pub(crate) const ALLOWED_SEXES: &[&str] = &["cow", "bull", "steer", "heifer", "calf", "unknown"];
+/// Max plausible cattle age in years.
+pub(crate) const MAX_AGE_YEARS: f64 = 30.0;
 
 pub(crate) fn optional_string<'a>(
     payload: &'a Value,
@@ -95,6 +101,101 @@ pub(crate) fn validate_runtime_config(config: &Config, prompt: &str) -> Result<(
     Ok(())
 }
 
+/// Optional animal-profile hints (`animal_breed`, `animal_sex`,
+/// `animal_age_years`) sent with an estimate to sharpen the AI guess.
+///
+/// Separate `animal_*` names avoid colliding with the model's own `breed`
+/// output field. Hints are echoed back on success and folded into the prompt
+/// sent to Ollama (so the result cache stays correct); the deterministic
+/// `none` placeholder weight is unchanged by hints.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct AnimalProfile {
+    pub(crate) breed: Option<String>,
+    pub(crate) sex: Option<String>,
+    pub(crate) age_years: Option<f64>,
+}
+
+/// Parse and validate the animal-profile hints. Missing, null, or blank
+/// values count as omitted so old clients keep working.
+pub(crate) fn parse_animal_profile(payload: &Value) -> Result<AnimalProfile, String> {
+    let breed = match optional_string(payload, "animal_breed")? {
+        None => None,
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                if trimmed.len() > MAX_BREED_BYTES {
+                    return Err("animal_breed must be under 64 bytes.".to_string());
+                }
+                if !trimmed
+                    .chars()
+                    .all(|c| c.is_ascii_alphabetic() || c == ' ' || c == '-' || c == '\'')
+                    || !trimmed.chars().any(|c| c.is_ascii_alphabetic())
+                {
+                    return Err(
+                        "animal_breed may only contain letters, spaces, and hyphens.".to_string(),
+                    );
+                }
+                Some(trimmed.to_string())
+            }
+        }
+    };
+    let sex = match optional_string(payload, "animal_sex")? {
+        None => None,
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                let lowered = trimmed.to_ascii_lowercase();
+                if !ALLOWED_SEXES.contains(&lowered.as_str()) {
+                    return Err(
+                        "animal_sex must be one of cow, bull, steer, heifer, calf, or unknown."
+                            .to_string(),
+                    );
+                }
+                // "unknown" carries no information; treat it as omitted.
+                (lowered != "unknown").then_some(lowered)
+            }
+        }
+    };
+    let age_years = match optional_number(payload, "animal_age_years")? {
+        None => None,
+        Some(age) => {
+            if !age.is_finite() || age < 0.0 || age > MAX_AGE_YEARS {
+                return Err("animal_age_years must be between 0 and 30.".to_string());
+            }
+            Some(age)
+        }
+    };
+    Ok(AnimalProfile {
+        breed,
+        sex,
+        age_years,
+    })
+}
+
+/// Render the profile as a short suffix appended to the model prompt.
+/// Returns an empty string when no hints were given (prompt unchanged).
+pub(crate) fn profile_prompt_suffix(profile: &AnimalProfile) -> String {
+    let mut parts = Vec::new();
+    if let Some(breed) = &profile.breed {
+        parts.push(format!("breed {}", breed));
+    }
+    if let Some(sex) = &profile.sex {
+        parts.push(format!("sex {}", sex));
+    }
+    if let Some(age) = profile.age_years {
+        parts.push(format!("age {} years", age));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" Animal context: {}.", parts.join("; "))
+    }
+}
+
 pub(crate) fn safe_url_for_info(url: &str) -> String {
     if valid_http_url(url) {
         url.to_string()
@@ -126,5 +227,58 @@ mod tests {
         assert!(!valid_http_url("file:///secret"));
         assert!(!valid_http_url("https://user:secret@example.com/api"));
         assert!(!valid_http_url("https://example.com/api?key=secret"));
+    }
+
+    #[test]
+    fn animal_profile_omitted_by_default() {
+        let payload = serde_json::json!({});
+        assert_eq!(
+            parse_animal_profile(&payload).unwrap(),
+            AnimalProfile::default()
+        );
+        assert_eq!(
+            profile_prompt_suffix(&AnimalProfile::default()),
+            String::new()
+        );
+    }
+
+    #[test]
+    fn animal_profile_accepts_valid_hints() {
+        let payload = serde_json::json!({
+            "animal_breed": "Angus",
+            "animal_sex": "Cow",
+            "animal_age_years": 4.5,
+        });
+        let profile = parse_animal_profile(&payload).unwrap();
+        assert_eq!(profile.breed.as_deref(), Some("Angus"));
+        // Sex is normalized to lowercase; the suffix feeds the model prompt.
+        assert_eq!(profile.sex.as_deref(), Some("cow"));
+        assert_eq!(profile.age_years, Some(4.5));
+        assert_eq!(
+            profile_prompt_suffix(&profile),
+            " Animal context: breed Angus; sex cow; age 4.5 years."
+        );
+    }
+
+    #[test]
+    fn animal_profile_rejects_bad_hints() {
+        for payload in [
+            serde_json::json!({"animal_breed": "!!!"}),
+            serde_json::json!({"animal_breed": "x".repeat(65)}),
+            serde_json::json!({"animal_sex": "dinosaur"}),
+            serde_json::json!({"animal_age_years": 99.0}),
+            serde_json::json!({"animal_age_years": "old"}),
+        ] {
+            assert!(parse_animal_profile(&payload).is_err());
+        }
+        // Blank/unknown hints count as omitted, not errors.
+        let payload = serde_json::json!({
+            "animal_breed": "  ",
+            "animal_sex": "unknown",
+        });
+        assert_eq!(
+            parse_animal_profile(&payload).unwrap(),
+            AnimalProfile::default()
+        );
     }
 }

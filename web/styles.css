@@ -47,6 +47,13 @@ input[type="file"], select, input[type="number"] {
 
 .tape-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0; }
 .tape-row > div { display: grid; gap: 4px; min-width: 0; }
+.profile-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 8px 0; }
+.profile-row > div { display: grid; gap: 4px; min-width: 0; }
+@media (max-width: 480px) { .profile-row { grid-template-columns: 1fr; } }
+.history-actions { display: flex; gap: 8px; margin-top: 8px; }
+#history-chart { width: 100%; height: 72px; margin-top: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--muted); }
+#history-chart[hidden] { display: none; }
+.history-remove { justify-self: start; min-height: 0; padding: 6px 10px; font-size: 0.85rem; background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
 #tape-button { margin-top: 4px; }
 @media (max-width: 480px) { .tape-row { grid-template-columns: 1fr; } }
 
@@ -127,7 +134,7 @@ button:not(:disabled):hover { background: var(--accent); }
 .history-meta { color: var(--muted); font-size: 0.85rem; margin: 0; overflow-wrap: anywhere; }
 #history-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 #history-list span { color: var(--muted); white-space: nowrap; flex: none; }
-#history-clear { justify-self: start; background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
+#history-clear, #history-export { justify-self: start; background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
 
 @media (prefers-color-scheme: dark) {
   :root {

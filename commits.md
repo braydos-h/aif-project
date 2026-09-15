@@ -744,3 +744,17 @@
   - Docs: `README.md` (tape usage, range widths, disclaimer, response example), `AGENTS.md` + `CONTRIBUTING.md` (tape module/fields).
   - `backend/tests/server.rs`: photo range/disclaimer, tape-only 448.4 kg vector, partial/out-of-range/string-type rejections, photo+tape cross-check, tape HTML/JS guards.
 - **Verification:** `cargo test` 90 pass (46 lib + 44 integration), `cargo fmt --check` clean, `cargo build --release` OK, `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage`.
+
+## 2026-09-15 03:28 UTC (session: batch API + animal profiles + WebUI upgrades)
+- **Context:** user picked 5 improvements (client downscale, batch endpoint, history upgrade, animal profiles, photo+tape fusion).
+- **Backend (`backend/src/http/`):**
+  - `validation.rs`: new `AnimalProfile` (`animal_breed`/`animal_sex`/`animal_age_years`) with type/size/allow-list checks (breed letters/spaces/hyphens ≤64 B, sex allow-list, age 0–30); blanks/`unknown` count as omitted; `profile_prompt_suffix` folds hints into the model prompt (empty when no hints, so old prompts/cache keys are byte-stable). 3 unit tests.
+  - `estimate.rs`: refactored single-estimate logic into `estimate_one(payload, id, state) -> (u16, Value)` shared by both routes; success bodies echo `animal_*` hints (never overwriting the model's own `breed`); new `handle_estimate_batch` for `POST /estimate-batch` (`{"items": [...]}` ≤20, per-item `{status, body}` with `{parent}-{index}` ids, one bad item never fails the batch).
+  - `mod.rs`/`handlers.rs`: explicit `POST /estimate-batch` route + `/info` endpoints entry.
+- **WebUI (`web/`):**
+  - `index.html`: animal-details section (`breed-input`/`sex-select`/`age-input`/`profile-status`), history chart (`history-chart` SVG) + `history-export` CSV button, tape cross-check tip, downscale note in limits hint.
+  - `app.js`: in-browser downscale (`createImageBitmap` + canvas, 1600 px cap, >1 MB only, GIF/BMP untouched, original on any failure); profile sent with photo/demo/tape; tape fields ride along as photo cross-check (warn-not-block when half-filled); photo-vs-tape >20% disagreement note; history entries gain ids + per-entry Remove, CSV export via Blob, pure-SVG trend sparkline. Still `textContent`/DOM-only, no storage.
+  - `styles.css`: `.profile-row` grid, `.history-actions`, `#history-chart`, `.history-remove` (130 non-blank lines, under 200 cap).
+- **Tests (`backend/tests/server.rs`):** batch per-item ids, failure isolation, shape rejections (empty/missing/>20), profile echo + prompt enrichment, profile rejections, omission keeps old shape, tape+profile echo, `/info` batch entry, 2 new WebUI guard tests.
+- **Docs:** `README.md` (WebUI bullets, routes table, animal-hint fields, batch section with examples).
+- **Verification:** `cargo test` 103 pass (49 lib + 54 integration), `cargo fmt --check` clean, release build OK, `node --check` OK, live smoke test of batch + profile rejection against the release binary, no `innerHTML`/`localStorage`/`sessionStorage`.

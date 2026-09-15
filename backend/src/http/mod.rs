@@ -12,7 +12,7 @@
 //! - [`assets`] — embedded WebUI files and the demo-image registry.
 //! - [`validation`] — runtime option validation and limits.
 //! - [`handlers`] — read-only info/demo handlers.
-//! - [`estimate`] — `POST /estimate-weight` handler.
+//! - [`estimate`] — `POST /estimate-weight` + `POST /estimate-batch`.
 
 pub mod assets;
 pub mod estimate;
@@ -30,7 +30,7 @@ use crate::cache::Cache;
 use crate::config::Config;
 
 use assets::{APP_JS, INDEX_HTML, STYLES_CSS};
-use estimate::handle_estimate;
+use estimate::{handle_estimate, handle_estimate_batch};
 use handlers::{handle_demo_image, handle_demo_list, handle_info};
 use response::{error_json, with_request_id, Response, CODE_NOT_FOUND};
 
@@ -73,6 +73,7 @@ fn dispatch(
             body: Vec::new(),
         },
         ("POST", "/estimate-weight") => handle_estimate(body, request_id, state),
+        ("POST", "/estimate-batch") => handle_estimate_batch(body, request_id, state),
         (_, _) => Response::json(404, error_json(CODE_NOT_FOUND, "Not found", request_id)),
     }
 }

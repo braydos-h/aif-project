@@ -175,6 +175,199 @@ fn post_json(server: &TestServer, payload: &str) -> (u16, Headers, serde_json::V
     (status, headers, json)
 }
 
+fn post_json_to(
+    server: &TestServer,
+    path: &str,
+    payload: &str,
+) -> (u16, Headers, serde_json::Value) {
+    let (status, headers, body) = http_request(
+        "POST",
+        path,
+        server.port,
+        &[json_header()],
+        payload.as_bytes(),
+    )
+    .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    (status, headers, json)
+}
+
+// --- batch estimates + animal profiles ---
+
+#[test]
+fn estimate_batch_returns_per_item_results() {
+    let server = setup_none();
+    let payload = format!(
+        r#"{{"items": [{{"image_base64": "{}"}}, {{"image_base64": "{}"}}]}}"#,
+        png_b64(),
+        png_b64()
+    );
+    let (status, headers, body) = post_json_to(&server, "/estimate-batch", &payload);
+    assert_eq!(status, 200);
+    assert!(headers.get("x-request-id").is_some());
+    let parent = body["request_id"].as_str().unwrap().to_string();
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    for (index, entry) in results.iter().enumerate() {
+        assert_eq!(entry["status"], 200);
+        assert_eq!(entry["body"]["source"], "local_fallback");
+        assert_eq!(
+            entry["body"]["request_id"].as_str().unwrap(),
+            format!("{}-{}", parent, index)
+        );
+    }
+}
+
+#[test]
+fn estimate_batch_isolates_item_failures() {
+    // The `none` backend hashes without image validation, so the failing
+    // items use shape errors (missing image, non-object) instead.
+    let server = setup_none();
+    let payload = format!(
+        r#"{{"items": [{{"prompt": "no image here"}}, {{"image_base64": "{}"}}, 42]}}"#,
+        png_b64()
+    );
+    let (status, _, body) = post_json_to(&server, "/estimate-batch", &payload);
+    assert_eq!(status, 200);
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0]["status"], 400);
+    assert_eq!(results[0]["body"]["code"], "missing_image");
+    assert_eq!(results[1]["status"], 200);
+    assert_eq!(results[1]["body"]["source"], "local_fallback");
+    assert_eq!(results[2]["status"], 400);
+    assert_eq!(results[2]["body"]["code"], "invalid_options");
+}
+
+#[test]
+fn estimate_batch_rejects_bad_shapes() {
+    let server = setup_none();
+    for payload in [r#"{}"#.to_string(), r#"{"items": []}"#.to_string()] {
+        let (status, _, body) = post_json_to(&server, "/estimate-batch", &payload);
+        assert_eq!(status, 400);
+        assert_eq!(body["code"], "invalid_options");
+    }
+    let many: Vec<String> = (0..21)
+        .map(|_| format!(r#"{{"image_base64": "{}"}}"#, png_b64()))
+        .collect();
+    let payload = format!(r#"{{"items": [{}]}}"#, many.join(","));
+    let (status, _, body) = post_json_to(&server, "/estimate-batch", &payload);
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "invalid_options");
+}
+
+#[test]
+fn animal_profile_echoed_and_sharpens_prompt() {
+    let server = setup_none();
+    let (status, _, body) = post_json(
+        &server,
+        &format!(
+            r#"{{"image_base64": "{}", "animal_breed": "Angus", "animal_sex": "cow", "animal_age_years": 4.5}}"#,
+            png_b64()
+        ),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(body["animal_breed"], "Angus");
+    assert_eq!(body["animal_sex"], "cow");
+    assert_eq!(body["animal_age_years"], 4.5);
+    assert!(body["prompt_used"]
+        .as_str()
+        .is_some_and(|p| p.contains("breed Angus")));
+}
+
+#[test]
+fn animal_profile_rejects_bad_hints() {
+    let server = setup_none();
+    for payload in [
+        format!(
+            r#"{{"image_base64": "{}", "animal_sex": "dinosaur"}}"#,
+            png_b64()
+        ),
+        format!(
+            r#"{{"image_base64": "{}", "animal_age_years": 99}}"#,
+            png_b64()
+        ),
+        format!(
+            r#"{{"image_base64": "{}", "animal_breed": "!!!"}}"#,
+            png_b64()
+        ),
+    ] {
+        let (status, _, body) = post_json(&server, &payload);
+        assert_eq!(status, 400);
+        assert_eq!(body["code"], "invalid_options");
+    }
+}
+
+#[test]
+fn animal_profile_omitted_keeps_old_shape() {
+    let server = setup_none();
+    let (status, _, body) = post_json(&server, &format!(r#"{{"image_base64": "{}"}}"#, png_b64()));
+    assert_eq!(status, 200);
+    assert!(body.get("animal_breed").is_none());
+    assert!(body.get("animal_sex").is_none());
+    assert!(body.get("animal_age_years").is_none());
+}
+
+#[test]
+fn tape_only_echoes_animal_profile() {
+    let server = setup_none();
+    let (status, _, body) = post_json(
+        &server,
+        r#"{"heart_girth_cm": 180, "body_length_cm": 150, "animal_breed": "Hereford"}"#,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(body["source"], "tape_measure");
+    assert_eq!(body["animal_breed"], "Hereford");
+}
+
+#[test]
+fn info_lists_batch_endpoint() {
+    let server = setup_none();
+    let (status, _, body) = get_json(&server, "/info");
+    assert_eq!(status, 200);
+    let endpoints = serde_json::to_string(&body["endpoints"]).unwrap();
+    assert!(endpoints.contains("POST /estimate-batch"));
+}
+
+#[test]
+fn index_has_profile_and_history_upgrades() {
+    let html = web_file("index.html");
+    for needle in [
+        r#"id="breed-input""#,
+        r#"id="sex-select""#,
+        r#"id="age-input""#,
+        r#"id="profile-status""#,
+        r#"id="history-export""#,
+        r#"id="history-chart""#,
+        "cross-check",
+    ] {
+        assert!(html.contains(needle), "index.html missing {}", needle);
+    }
+}
+
+#[test]
+fn js_has_downscale_profile_and_history_upgrades() {
+    let js = web_file("app.js");
+    for needle in [
+        "createImageBitmap",
+        "1600",
+        "animal_breed",
+        "animal_sex",
+        "animal_age_years",
+        "history-export",
+        "history-chart",
+        "text/csv",
+        "cross-check",
+        "disagree by over 20%",
+    ] {
+        assert!(js.contains(needle), "app.js missing {}", needle);
+    }
+    assert!(js.contains("textContent"));
+    assert!(!js.contains("innerHTML"));
+    assert!(!js.contains("localStorage"));
+    assert!(!js.contains("sessionStorage"));
+}
+
 fn get_json(server: &TestServer, path: &str) -> (u16, Headers, serde_json::Value) {
     let (status, headers, body) = http_request("GET", path, server.port, &[], b"").unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);

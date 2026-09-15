@@ -33,11 +33,17 @@ of silently using defaults.
 The browser app supports:
 
 - batch image selection (JPEG, PNG, WebP, BMP, and GIF) with type and size
-  checks;
+  checks; large photos are resized in the browser before upload;
 - one **Estimate Weight** button that estimates each selected image in turn,
   showing per-image progress and a final succeeded/failed count;
+- optional animal details (breed, sex, age) sent with every estimate to
+  sharpen the AI guess;
+- tape measurements double as a photo cross-check: fill them in before
+  estimating and each photo result carries the tape comparison (with a
+  warning when photo and tape disagree by over 20%);
 - a latest-answer area plus a session-only history of the last 20 successful
-  estimates, each with its weight range and source;
+  estimates, each with its weight range and source, removable one by one,
+  with a weight-trend chart and CSV export;
 - a tape-measure section (heart girth + body length, 50–300 cm) for offline
   Schaeffer estimates with no photo needed;
 - weight ranges on every result (±10% photo, ±5% tape) and a dosing warning
@@ -79,6 +85,8 @@ and the tests are all Rust (plus plain browser HTML/CSS/JavaScript).
 | `GET` | `/health` | Liveness and effective backend/model |
 | `GET` | `/demo-cows` | Controlled list of bundled demo images |
 | `GET` | `/demo-cows/{id}` | One approved bundled demo image (`1`, `2`, or `3`) |
+| `POST` | `/estimate-weight` | Single estimate (photo, tape, or both) |
+| `POST` | `/estimate-batch` | Up to 20 estimates in one request |
 
 `/info` includes `backend`, `model`, `ollama_url`, `default_prompt`, version,
 endpoints, and an `ollama_configured` boolean. It never returns
@@ -153,6 +161,40 @@ echoed `heart_girth_cm`/`body_length_cm`.
 
 Measure heart girth just behind the front legs and body length from chest
 to tail head, with the animal standing square.
+
+Optional animal details sharpen the AI guess. `animal_breed` is free text
+(letters, spaces, hyphens, max 64); `animal_sex` is one of `cow`, `bull`,
+`steer`, `heifer`, `calf`, or `unknown`; `animal_age_years` is 0–30. They
+are folded into the model prompt, echoed back as `animal_breed`/
+`animal_sex`/`animal_age_years` (never overwriting the model's own `breed`
+guess), and omitted fields leave old clients untouched. Bad hints return
+`400 invalid_options`.
+
+```json
+{
+  "image_base64": "iVBORw0KGgoAAAANSUhEUgAA...",
+  "animal_breed": "Angus",
+  "animal_sex": "cow",
+  "animal_age_years": 4.5
+}
+```
+
+### `POST /estimate-batch`
+
+Send up to 20 single-estimate payloads in one request (same fields as
+above per item, sharing the 20 MB body limit). Items run sequentially;
+one bad item never fails the batch:
+
+```json
+{ "items": [{ "image_base64": "..." }, { "heart_girth_cm": 180, "body_length_cm": 150 }] }
+```
+
+The response carries per-item `{status, body}` pairs, each body with its
+own `{parent}-{index}` request id:
+
+```json
+{ "results": [{ "status": 200, "body": { "...": "..." } }], "request_id": "bce5028c" }
+```
 
 Status codes are `200` for success, `400` for missing/malformed input,
 invalid images, or invalid runtime options, `404` for unknown routes, and

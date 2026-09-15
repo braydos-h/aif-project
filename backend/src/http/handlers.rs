@@ -28,7 +28,8 @@ pub(crate) fn handle_info(request_id: &str, state: &ServerState) -> Response {
                     "GET /health",
                     "GET /demo-cows",
                     "GET /demo-cows/{id}",
-                    "POST /estimate-weight"
+                    "POST /estimate-weight",
+                    "POST /estimate-batch"
                 ],
             }),
             request_id,
