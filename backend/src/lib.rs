@@ -13,4 +13,5 @@ pub mod hash;
 pub mod http;
 pub mod ollama;
 pub mod parse;
+pub mod tape;
 pub mod validate;

@@ -30,6 +30,7 @@ Important paths:
 - `backend/src/parse/` — weight extraction (`mod.rs` orchestration,
   `structured.rs` JSON blocks, `text.rs` free-text fallback).
 - `backend/src/fallback.rs` — deterministic SHA-256-derived offline estimate.
+- `backend/src/tape.rs` — Schaeffer tape estimator, ranges, dosing disclaimer.
 - `backend/src/cache.rs` — in-memory TTL cache.
 - `backend/src/ollama/` — Ollama backend (`mod.rs` orchestration,
   `client.rs` transport/retry, `response.rs` reply parsing,
@@ -61,8 +62,10 @@ image validation, request IDs, CORS headers, meaningful error codes, and
 header-safe responses.
 
 The estimate request accepts the existing `image_url`, `image_base64`, and
-`prompt` fields plus optional `backend`, `model`, `ollama_url`, and
-`ollama_api_key`. Optional values must be type/size/allow-list validated. Use
+`prompt` fields plus optional `backend`, `model`, `ollama_url`,
+`ollama_api_key`, and tape fields `heart_girth_cm`/`body_length_cm`
+(50–300 cm, both required together; tape-only needs no image). Optional
+values must be type/size/allow-list validated. Use
 a cloned request-specific `Config`; never mutate process environment variables
 or shared server state. Never log API keys or return them in errors/info.
 

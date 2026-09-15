@@ -28,6 +28,19 @@ pub(crate) fn optional_string<'a>(
     }
 }
 
+/// Optional numeric field: accepts a JSON number only (no strings/bools).
+/// Returns `Ok(None)` when absent or null so old clients keep working.
+pub(crate) fn optional_number(payload: &Value, field: &str) -> Result<Option<f64>, String> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => n
+            .as_f64()
+            .map(Some)
+            .ok_or_else(|| format!("{} must be a number", field)),
+        Some(_) => Err(format!("{} must be a number", field)),
+    }
+}
+
 pub(crate) fn has_control_or_whitespace(value: &str) -> bool {
     value
         .bytes()

@@ -37,7 +37,11 @@ The browser app supports:
 - one **Estimate Weight** button that estimates each selected image in turn,
   showing per-image progress and a final succeeded/failed count;
 - a latest-answer area plus a session-only history of the last 20 successful
-  estimates;
+  estimates, each with its weight range and source;
+- a tape-measure section (heart girth + body length, 50–300 cm) for offline
+  Schaeffer estimates with no photo needed;
+- weight ranges on every result (±10% photo, ±5% tape) and a dosing warning
+  on every result and in the footer;
 - live status updates, dark-mode support, and a responsive single-column
   layout.
 
@@ -102,12 +106,16 @@ without changing process environment variables or global server configuration.
 The API key is used only for that request, is never logged, and is never
 returned in a response.
 
-A successful response includes:
+A successful photo response includes:
 
 ```json
 {
   "estimated_weight_kg": 612.0,
   "estimated_weight_lbs": 1349.2,
+  "weight_min_kg": 550.8,
+  "weight_max_kg": 673.2,
+  "weight_min_lbs": 1214.3,
+  "weight_max_lbs": 1484.1,
   "source": "ollama",
   "model": "gemma4:31b-cloud",
   "prompt_used": "Estimate this cow in kilograms and return JSON.",
@@ -115,15 +123,36 @@ A successful response includes:
   "confidence": 0.82,
   "breed": "Angus",
   "body_condition_score": 6.0,
+  "disclaimer": "Estimate only — verify with a scale. Do not dose medication from this estimate.",
   "request_id": "bce5028c"
 }
 ```
 
 `model`, `confidence`, `breed`, and `body_condition_score` are present when
-the selected backend returns them. `source` is `ollama` or
-`local_fallback`. Every JSON response also sends the same request ID in the
-`x-request-id` header and includes `Access-Control-Allow-Origin: *` for
-existing API clients.
+the selected backend returns them. `source` is `ollama`,
+`local_fallback`, or `tape_measure`. Photo estimates carry a ±10% range
+(`weight_min_kg`/`weight_max_kg` plus lbs); tape estimates carry a ±5%
+range. Every success also carries a `disclaimer`: verify with a scale and
+never dose medication from an estimate. Every JSON response also sends the
+same request ID in the `x-request-id` header and includes
+`Access-Control-Allow-Origin: *` for existing API clients.
+
+Tape-measure estimates need no image and no network (Schaeffer's formula:
+`girth_cm² × length_cm / 10838`). Send both fields together; both must be
+numbers between 50 and 300 cm. When image and tape are sent together, the
+photo estimate stays primary and the tape cross-check is merged in as
+`tape_weight_kg`/`tape_weight_lbs`/`tape_min_kg`/`tape_max_kg` plus the
+echoed `heart_girth_cm`/`body_length_cm`.
+
+```json
+{
+  "heart_girth_cm": 180,
+  "body_length_cm": 150
+}
+```
+
+Measure heart girth just behind the front legs and body length from chest
+to tail head, with the animal standing square.
 
 Status codes are `200` for success, `400` for missing/malformed input,
 invalid images, or invalid runtime options, `404` for unknown routes, and

@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 
 use crate::config::{kg_to_lbs, round1};
 use crate::hash::sha256_bytes;
+use crate::tape::{weight_range_kg, DISCLAIMER, PHOTO_RANGE_FRACTION};
 
 /// Build the fallback estimate dict for an image reference.
 ///
@@ -19,17 +20,24 @@ pub fn estimate_fallback(image_reference: &str, prompt: &str) -> Value {
     let raw: u32 = u32::from_be_bytes(first_4.try_into().unwrap());
     let normalized = raw as f64 / u32::MAX as f64;
     let weight_kg = round1(250.0 + normalized * 650.0);
+    let (min_kg, max_kg) = weight_range_kg(weight_kg, PHOTO_RANGE_FRACTION);
 
     json!({
         "estimated_weight_kg": weight_kg,
         "estimated_weight_lbs": kg_to_lbs(weight_kg),
+        "weight_min_kg": min_kg,
+        "weight_max_kg": max_kg,
+        "weight_min_lbs": kg_to_lbs(min_kg),
+        "weight_max_lbs": kg_to_lbs(max_kg),
         "source": "local_fallback",
+        "method": "fallback_hash",
         "prompt_used": prompt,
         "model_response": "",
         "model": null,
         "confidence": null,
         "breed": null,
         "body_condition_score": null,
+        "disclaimer": DISCLAIMER,
     })
 }
 
@@ -40,11 +48,17 @@ pub fn result_with_extras(
     model_response: &str,
     extras: &crate::parse::Extras,
 ) -> Value {
+    let (min_kg, max_kg) = weight_range_kg(weight_kg, PHOTO_RANGE_FRACTION);
     let mut obj = json!({
         "estimated_weight_kg": weight_kg,
         "estimated_weight_lbs": kg_to_lbs(weight_kg),
+        "weight_min_kg": min_kg,
+        "weight_max_kg": max_kg,
+        "weight_min_lbs": kg_to_lbs(min_kg),
+        "weight_max_lbs": kg_to_lbs(max_kg),
         "prompt_used": prompt,
         "model_response": model_response,
+        "disclaimer": DISCLAIMER,
     });
     if let Some(c) = extras.confidence {
         obj["confidence"] = Value::from(c);

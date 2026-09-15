@@ -770,3 +770,99 @@ fn fallback_schema_has_nullable_extras() {
     assert!(body.get("breed").is_some());
     assert!(body.get("body_condition_score").is_some());
 }
+
+#[test]
+fn photo_estimates_include_range_and_disclaimer() {
+    let server = setup_none();
+    let (status, _, body) = post_json(&server, &format!(r#"{{"image_base64": "{}"}}"#, png_b64()));
+    assert_eq!(status, 200);
+    let kg = body["estimated_weight_kg"].as_f64().unwrap();
+    let min = body["weight_min_kg"].as_f64().unwrap();
+    let max = body["weight_max_kg"].as_f64().unwrap();
+    assert!(min < kg && kg < max);
+    assert!((max - min - kg * 0.2).abs() < 0.2);
+    assert!(body["disclaimer"].as_str().unwrap().contains("Do not dose"));
+}
+
+#[test]
+fn tape_only_estimate_needs_no_image() {
+    let server = setup_none();
+    let (status, _, body) = post_json(&server, r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#);
+    assert_eq!(status, 200);
+    assert_eq!(body["source"], "tape_measure");
+    assert_eq!(body["method"], "schaeffer_tape");
+    assert_eq!(body["estimated_weight_kg"], 448.4);
+    assert_eq!(body["heart_girth_cm"], 180.0);
+    assert!(body["disclaimer"].as_str().unwrap().contains("Do not dose"));
+    let min = body["weight_min_kg"].as_f64().unwrap();
+    let max = body["weight_max_kg"].as_f64().unwrap();
+    assert!((min - 426.0).abs() < 0.2 && (max - 470.8).abs() < 0.2);
+}
+
+#[test]
+fn tape_partial_and_out_of_range_are_invalid_options() {
+    let server = setup_none();
+    let (status, _, body) = post_json(&server, r#"{"heart_girth_cm": 180}"#);
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "invalid_options");
+    let (status, _, body) = post_json(&server, r#"{"heart_girth_cm": 20, "body_length_cm": 150}"#);
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "invalid_options");
+    let (status, _, body) = post_json(
+        &server,
+        r#"{"heart_girth_cm": "big", "body_length_cm": 150}"#,
+    );
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "invalid_options");
+}
+
+#[test]
+fn photo_plus_tape_returns_cross_check() {
+    let server = setup_none();
+    let (status, _, body) = post_json(
+        &server,
+        &format!(
+            r#"{{"image_base64": "{}", "heart_girth_cm": 180, "body_length_cm": 150}}"#,
+            png_b64()
+        ),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(body["source"], "local_fallback");
+    assert_eq!(body["tape_weight_kg"], 448.4);
+    assert_eq!(body["heart_girth_cm"], 180.0);
+}
+
+#[test]
+fn index_has_tape_inputs_and_dosing_warning() {
+    let html = web_file("index.html");
+    for needle in [
+        r#"id="tape-girth""#,
+        r#"id="tape-length""#,
+        r#"id="tape-button""#,
+        r#"id="tape-status""#,
+        "Tape measure",
+        "Do not dose",
+    ] {
+        assert!(html.contains(needle), "index.html missing {}", needle);
+    }
+}
+
+#[test]
+fn js_renders_range_tape_and_disclaimer_safely() {
+    let js = web_file("app.js");
+    for needle in [
+        "tape-button",
+        "heart_girth_cm",
+        "body_length_cm",
+        "weight_min_kg",
+        "tape_weight_kg",
+        "Do not dose",
+        "range ",
+    ] {
+        assert!(js.contains(needle), "app.js missing {}", needle);
+    }
+    assert!(js.contains("textContent"));
+    assert!(!js.contains("innerHTML"));
+    assert!(!js.contains("localStorage"));
+    assert!(!js.contains("sessionStorage"));
+}

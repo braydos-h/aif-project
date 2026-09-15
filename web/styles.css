@@ -35,7 +35,7 @@ h2 { font-size: 1.1rem; margin: 20px 0 0; }
 label { font-weight: 700; }
 input[type="file"], button, select { font: inherit; }
 
-input[type="file"], select {
+input[type="file"], select, input[type="number"] {
   width: 100%;
   min-height: 44px;
   padding: 10px;
@@ -44,6 +44,11 @@ input[type="file"], select {
   background: var(--surface);
   color: var(--ink);
 }
+
+.tape-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0; }
+.tape-row > div { display: grid; gap: 4px; min-width: 0; }
+#tape-button { margin-top: 4px; }
+@media (max-width: 480px) { .tape-row { grid-template-columns: 1fr; } }
 
 button {
   min-height: 44px;

@@ -54,6 +54,23 @@
       </div>
     </section>
 
+    <section aria-labelledby="tape-heading">
+      <h2 id="tape-heading">Tape measure</h2>
+      <p class="note">No photo? Measure heart girth (just behind the front legs) and body length (chest to tail head) in centimetres.</p>
+      <div class="tape-row">
+        <div>
+          <label for="tape-girth">Heart girth (cm)</label>
+          <input id="tape-girth" type="number" min="50" max="300" step="0.5" inputmode="decimal" placeholder="e.g. 180">
+        </div>
+        <div>
+          <label for="tape-length">Body length (cm)</label>
+          <input id="tape-length" type="number" min="50" max="300" step="0.5" inputmode="decimal" placeholder="e.g. 150">
+        </div>
+      </div>
+      <button id="tape-button" type="button">Estimate from tape</button>
+      <p id="tape-status" class="note" role="status" aria-live="polite"></p>
+    </section>
+
     <section aria-labelledby="history-heading">
       <h2 id="history-heading">History</h2>
       <p id="history-empty">Estimates from this session will show here.</p>
@@ -62,7 +79,7 @@
     </section>
 
     <footer>
-      <p class="note">Estimate only — not a scale or vet advice. Check the source label (ollama vs local_fallback).</p>
+      <p class="note">Estimate only — not a scale or vet advice. Check the source label (ollama vs local_fallback vs tape_measure). Do not dose medication from an estimate — always use a verified scale.</p>
     </footer>
   </main>
 </body>

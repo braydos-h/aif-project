@@ -25,6 +25,10 @@
   const demoPreview = $("demo-preview");
   const demoStatus = $("demo-status");
   const unitToggle = $("unit-toggle");
+  const tapeGirth = $("tape-girth");
+  const tapeLength = $("tape-length");
+  const tapeButton = $("tape-button");
+  const tapeStatus = $("tape-status");
   const status = $("status");
   const healthPill = $("health-pill");
   const backendLabel = $("backend-label");
@@ -48,6 +52,10 @@
 
   function setDemoStatus(message) {
     demoStatus.textContent = message;
+  }
+
+  function setTapeStatus(message) {
+    if (tapeStatus) tapeStatus.textContent = message;
   }
 
   function formatBytes(bytes) {
@@ -286,6 +294,28 @@
     return notes;
   }
 
+  function formatRange(result) {
+    const minKg = result.weight_min_kg;
+    const maxKg = result.weight_max_kg;
+    const minLbs = result.weight_min_lbs;
+    const maxLbs = result.weight_max_lbs;
+    if (displayUnit === "lb" && typeof minLbs === "number" && typeof maxLbs === "number") {
+      return `range ${formatWeight(minLbs)}–${formatWeight(maxLbs)} lb`;
+    }
+    if (typeof minKg === "number" && typeof maxKg === "number") {
+      return `range ${formatWeight(minKg)}–${formatWeight(maxKg)} kg`;
+    }
+    return null;
+  }
+
+  function formatTapeCheck(result) {
+    if (typeof result.tape_weight_kg !== "number" || !Number.isFinite(result.tape_weight_kg)) return null;
+    const kg = formatWeight(result.tape_weight_kg);
+    const lbs = typeof result.tape_weight_lbs === "number" ? formatWeight(result.tape_weight_lbs) : null;
+    const primary = displayUnit === "lb" && lbs !== null ? `${lbs} lb` : `${kg} kg`;
+    return `tape ${primary}`;
+  }
+
   function describeResult(filename, result) {
     const kg = formatWeight(result.estimated_weight_kg);
     const lbs = typeof result.estimated_weight_lbs === "number"
@@ -295,11 +325,16 @@
     const breed = typeof result.breed === "string" && result.breed ? result.breed : null;
     const confidence = formatConfidence(result.confidence);
     const score = formatScore(result.body_condition_score);
+    const range = formatRange(result);
+    const tape = formatTapeCheck(result);
     const notes = sanityNotes(result);
+    const disclaimer = typeof result.disclaimer === "string" && result.disclaimer
+      ? result.disclaimer
+      : "Do not dose medication from this estimate — use a verified scale.";
     const primary = displayUnit === "lb" && lbs !== null ? `${lbs} lb` : `${kg} kg`;
     const secondary = displayUnit === "lb" && lbs !== null ? `${kg} kg` : (lbs === null ? null : `${lbs} lb`);
-    const parts = [secondary, source, breed, confidence, score].filter(Boolean);
-    const detail = parts.join(" · ") + (notes.length ? ` — ${notes.join(" ")}` : "");
+    const parts = [secondary, range, source, breed, confidence, score, tape].filter(Boolean);
+    const detail = parts.join(" · ") + (notes.length ? ` — ${notes.join(" ")}` : "") + ` — ${disclaimer}`;
     const model = typeof result.model === "string" && result.model ? result.model : null;
     const rid = typeof result._requestId === "string" && result._requestId
       ? result._requestId
@@ -310,7 +345,7 @@
 
   function historyLabel(entry) {
     const primary = displayUnit === "lb" && entry.lbs !== null ? `${entry.lbs} lb` : `${entry.kg} kg`;
-    const rest = [entry.source, entry.breed, entry.confidence, entry.score].filter(Boolean);
+    const rest = [entry.range, entry.source, entry.breed, entry.confidence, entry.score, entry.tape].filter(Boolean);
     return rest.length ? `${primary} · ${rest.join(" · ")}` : primary;
   }
 
@@ -318,6 +353,9 @@
     busy = next;
     button.disabled = next;
     demoButton.disabled = next || !demoSelect.value;
+    if (tapeButton) tapeButton.disabled = next;
+    if (tapeGirth) tapeGirth.disabled = next;
+    if (tapeLength) tapeLength.disabled = next;
     input.disabled = next;
     cancelButton.hidden = !next;
     progress.hidden = !next;
@@ -533,12 +571,16 @@
     showResult(described.title, described.detail, meta || null);
     lastShown = { filename, result };
     const breed = typeof result.breed === "string" && result.breed ? result.breed : null;
+    const savedRange = formatRange(result);
+    const savedTape = formatTapeCheck(result);
     history.unshift({
       filename,
       kg: formatWeight(result.estimated_weight_kg),
       lbs: typeof result.estimated_weight_lbs === "number"
         ? formatWeight(result.estimated_weight_lbs)
         : null,
+      range: savedRange,
+      tape: savedTape,
       source: typeof result.source === "string" ? result.source : "unknown",
       breed,
       confidence: formatConfidence(result.confidence),
@@ -546,7 +588,7 @@
       model,
       requestId: rid,
       time: stamp,
-      kind: kind === "demo" ? "demo" : "upload",
+      kind: kind === "demo" ? "demo" : (kind === "tape" ? "tape" : "upload"),
     });
     if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
     renderHistory();
@@ -605,9 +647,49 @@
     }
   }
 
+  async function runTape() {
+    if (busy || !tapeGirth || !tapeLength) return;
+    const girth = Number.parseFloat(tapeGirth.value);
+    const length = Number.parseFloat(tapeLength.value);
+    if (!Number.isFinite(girth) || !Number.isFinite(length)) {
+      setTapeStatus("Enter both measurements in centimetres.");
+      return;
+    }
+    if (girth < 50 || girth > 300 || length < 50 || length > 300) {
+      setTapeStatus("Measurements must be between 50 and 300 cm.");
+      return;
+    }
+    setBusy(true);
+    cancelRequested = false;
+    setTapeStatus(`Estimating from tape (${girth} × ${length} cm)…`);
+    setStatus(`Estimating from tape measurements…`);
+    try {
+      const result = await requestEstimate({ heart_girth_cm: girth, body_length_cm: length });
+      const label = `Tape ${girth}×${length} cm`;
+      pushHistory(label, result, "tape");
+      setStatus("Done.");
+      setTapeStatus("Done. Tape uses Schaeffer's formula — verify with a scale; do not dose from it.");
+    } catch (error) {
+      const payload = (error && error.payload) || {};
+      const serverMsg = typeof payload.error === "string" && payload.error ? payload.error : "";
+      const code = typeof payload.code === "string" ? payload.code : "";
+      const friendly = code === "invalid_options" && serverMsg ? serverMsg : errorMessage(error);
+      showResult("Tape estimate failed.", friendly);
+      setStatus("Failed. Try again.");
+      setTapeStatus("Estimate failed. Check both measurements (50–300 cm).");
+    } finally {
+      setBusy(false);
+    }
+    try {
+      resultArea.focus({ preventScroll: false });
+    } catch (_error) {
+      // Focus is a convenience only.
+    }
+  }
+
   button.addEventListener("click", runEstimates);
   cancelButton.addEventListener("click", requestCancel);
-  demoButton.addEventListener("click", runDemo);
+  if (tapeButton) tapeButton.addEventListener("click", runTape);
   demoRetry.addEventListener("click", loadDemos);
   demoSelect.addEventListener("change", () => {
     updateDemoPreview();
@@ -618,6 +700,7 @@
   input.addEventListener("change", renderFileList);
   setStatus("Choose images to begin.");
   setDemoStatus("");
+  setTapeStatus("");
   renderHistory();
   renderBatch([]);
   void checkHealth();

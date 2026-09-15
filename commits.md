@@ -730,3 +730,17 @@
   - `backend/src/fallback.rs`: `none` backend now returns nullable `model`/`confidence`/`breed`/`body_condition_score` to unify schema with `ollama`.
   - `backend/tests/server.rs`: new guards for health/batch controls, JS batch/health/history strings, static cache headers, fallback nullable extras.
 - **Verification:** `cargo test` 79 pass (41 lib + 38 integration), `cargo fmt --check` clean, `cargo build --release` OK, `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage`.
+
+## 2026-09-15 03:12 UTC (session: field accuracy pack — tape + range + dosing warn)
+- **Context:** photo estimates were point-only with no uncertainty, no offline measuring option, and only a footer disclaimer. Field users needed a no-photo fallback and an explicit range plus a dosing guardrail.
+- **Change (backend + WebUI, no new routes/deps):**
+  - `backend/src/tape.rs` (new): Schaeffer `girth_cm² × length_cm / 10838` (`tape_weight_kg`), ±5% tape / ±10% photo ranges (`weight_range_kg`), 50–300 cm validation, `estimate_tape` with `source tape_measure`/`method schaeffer_tape` + `disclaimer`.
+  - `backend/src/http/estimate.rs`: optional numeric `heart_girth_cm`/`body_length_cm` (both-or-neither, else 400 `invalid_options`); tape-only returns without image/network; photo+tape merges `tape_weight_kg/lbs`, `tape_min/max_kg`, girth/length into the photo result.
+  - `backend/src/http/validation.rs`: new `optional_number` (JSON numbers only, old clients unaffected).
+  - `backend/src/fallback.rs`: `none` + Ollama (`result_with_extras`) results now include `weight_min/max_kg/lbs`, `method`, and `disclaimer`.
+  - `web/index.html`: `tape-heading` section with `tape-girth`/`tape-length` (number, 50–300) + `tape-button`/`tape-status`; footer now names `tape_measure` and warns against dosing from estimates.
+  - `web/app.js`: `formatRange`/`formatTapeCheck` in `describeResult`/`historyLabel`/`pushHistory` (unit-aware), `runTape` with client-side 50–300 checks and server-message passthrough, shared `busy` guard, per-result dosing line; still `textContent`-only, no storage.
+  - `web/styles.css`: `.tape-row` 2-col grid (1-col under 480 px), number-input styling (123 non-blank lines, under 200 cap).
+  - Docs: `README.md` (tape usage, range widths, disclaimer, response example), `AGENTS.md` + `CONTRIBUTING.md` (tape module/fields).
+  - `backend/tests/server.rs`: photo range/disclaimer, tape-only 448.4 kg vector, partial/out-of-range/string-type rejections, photo+tape cross-check, tape HTML/JS guards.
+- **Verification:** `cargo test` 90 pass (46 lib + 44 integration), `cargo fmt --check` clean, `cargo build --release` OK, `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage`.

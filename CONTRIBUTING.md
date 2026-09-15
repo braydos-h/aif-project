@@ -44,6 +44,7 @@ backend/src/
 ├── validate/       image refs (mod.rs), base64 codec (base64.rs), magic bytes (image.rs), URL fetch (fetch.rs)
 ├── parse/          weight extraction (mod.rs), JSON blocks (structured.rs), free text (text.rs)
 ├── fallback.rs     deterministic offline estimate
+├── tape.rs         Schaeffer tape estimator, ranges, dosing disclaimer
 ├── cache.rs        in-memory TTL result cache
 ├── ollama/         orchestration (mod.rs), transport/retry (client.rs), reply parsing (response.rs), cache keys (cache_key.rs)
 ├── http/           dispatch (mod.rs), server loop (server.rs), responses (response.rs), request ids (request_id.rs),
