@@ -23,6 +23,7 @@
   const input = $("image-input");
   const button = $("estimate-button");
   const cancelButton = $("cancel-button");
+  const clearButton = $("clear-button");
   const progress = $("progress");
   const fileList = $("file-list");
   const batchList = $("batch-list");
