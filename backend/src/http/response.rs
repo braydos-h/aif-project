@@ -84,6 +84,22 @@ pub(crate) fn write_response(
     request_id: &str,
     response: &Response,
 ) -> std::io::Result<()> {
+    // Compiled-in WebUI/demo bytes are immutable for a given binary build,
+    // so browsers may cache them aggressively. JSON API responses stay
+    // uncacheable by default (no Cache-Control/ETag emitted for them).
+    let cache_headers = if !response.body.is_empty()
+        && (response.content_type.starts_with("text/html")
+            || response.content_type.starts_with("text/css")
+            || response.content_type.contains("javascript")
+            || response.content_type.starts_with("image/"))
+    {
+        format!(
+            "Cache-Control: public, max-age=3600, immutable\r\nETag: \"{}\"\r\n",
+            response.body.len()
+        )
+    } else {
+        String::new()
+    };
     let head = format!(
         "HTTP/1.1 {} {}\r\n\
          Content-Type: {}\r\n\
@@ -95,13 +111,14 @@ pub(crate) fn write_response(
          X-Content-Type-Options: nosniff\r\n\
          Referrer-Policy: no-referrer\r\n\
          Content-Security-Policy: default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'\r\n\
-         Connection: close\r\n\
+         {}Connection: close\r\n\
          \r\n",
         response.status,
         status_text(response.status),
         response.content_type,
         response.body.len(),
         request_id,
+        cache_headers,
     );
     stream.write_all(head.as_bytes())?;
     stream.write_all(&response.body)?;

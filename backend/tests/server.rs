@@ -696,3 +696,77 @@ fn accuracy_trust_helpers_render_extras_and_warnings() {
     assert!(js.contains("textContent"));
     assert!(!js.contains("innerHTML"));
 }
+
+#[test]
+fn index_has_health_badge_and_batch_controls() {
+    let html = web_file("index.html");
+    for needle in [
+        r#"id="health-pill""#,
+        r#"id="backend-label""#,
+        r#"id="file-list""#,
+        r#"id="batch-list""#,
+        r#"id="progress""#,
+        r#"role="progressbar""#,
+        r#"id="cancel-button""#,
+        r#"id="limits-hint""#,
+        r#"id="demo-preview""#,
+        r#"id="demo-retry""#,
+        r#"id="demo-status""#,
+        r#"id="history-clear""#,
+    ] {
+        assert!(html.contains(needle), "index.html missing {}", needle);
+    }
+}
+
+#[test]
+fn js_has_batch_health_and_history_controls() {
+    let js = web_file("app.js");
+    for needle in [
+        "health-pill",
+        "backend-label",
+        "file-list",
+        "batch-list",
+        "cancel-button",
+        "history-clear",
+        "demo-preview",
+        "demo-retry",
+        "requestId",
+        "aria-valuenow",
+        "revokeObjectURL",
+    ] {
+        assert!(js.contains(needle), "app.js missing {}", needle);
+    }
+    assert!(js.contains("textContent"));
+    assert!(!js.contains("innerHTML"));
+    assert!(!js.contains("localStorage"));
+    assert!(!js.contains("sessionStorage"));
+}
+
+#[test]
+fn static_assets_send_cache_headers() {
+    let server = setup_none();
+    let (status, headers, _) = get_raw(&server, "/styles.css");
+    assert_eq!(status, 200);
+    assert!(headers
+        .get("cache-control")
+        .is_some_and(|v| v.contains("immutable")));
+    assert!(headers.get("etag").is_some());
+    let (status, headers, _) = get_raw(&server, "/demo-cows/1");
+    assert_eq!(status, 200);
+    assert!(headers
+        .get("cache-control")
+        .is_some_and(|v| v.contains("max-age")));
+    assert!(headers.get("etag").is_some());
+}
+
+#[test]
+fn fallback_schema_has_nullable_extras() {
+    let server = setup_none();
+    let (status, _, body) = post_json(&server, &format!(r#"{{"image_base64": "{}"}}"#, png_b64()));
+    assert_eq!(status, 200);
+    assert_eq!(body["source"], "local_fallback");
+    assert!(body.get("model").is_some());
+    assert!(body.get("confidence").is_some());
+    assert!(body.get("breed").is_some());
+    assert!(body.get("body_condition_score").is_some());
+}

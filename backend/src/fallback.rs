@@ -26,6 +26,10 @@ pub fn estimate_fallback(image_reference: &str, prompt: &str) -> Value {
         "source": "local_fallback",
         "prompt_used": prompt,
         "model_response": "",
+        "model": null,
+        "confidence": null,
+        "breed": null,
+        "body_condition_score": null,
     })
 }
 
