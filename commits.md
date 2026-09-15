@@ -769,3 +769,13 @@
   - Docs: `README.md` (routes table, `503 server_busy`, SSRF-guard note), `AGENTS.md` (routes incl. batch/metrics/503, SSRF note), `CONTRIBUTING.md` (handlers cover metrics).
 - **Verification:** `cargo test` 114 pass (57 lib + 57 integration), `cargo fmt --check` clean, release build OK. `cargo clippy -D warnings` reports only pre-existing lints (`Cache::len` without `is_empty`, `chunks_exact`), also present on the clean tree; no new clippy hits in touched files. Landed as `42620a4` + `c0e8169`.
 - **Follow-ups:** WebUI batch still POSTs per-file instead of using `POST /estimate-batch`; no rate limiting per IP; `/metrics` is JSON only (no Prometheus text).
+
+## 2026-09-15 03:46 UTC (session: batch + reliability UX — single estimate-batch, retry, drop/paste, health polling)
+- **Context:** user picked the Batch + reliability UX pack. WebUI sent one `POST /estimate-weight` per photo (no use of `POST /estimate-batch`), had no per-item retry or `503 server_busy` backoff, no drag-drop/paste or clear-selection, and checked `/health` only once on load.
+- **Change (`web/` + guards, no new routes/deps):**
+  - `web/index.html`: new `clear-button` + limits-hint now mentions drag-and-drop/paste; all prior ids preserved, no settings-clutter ids.
+  - `web/app.js`: `runEstimates` now encodes valid photos then sends one `POST /estimate-batch` per ~18 MB chunk (shared 20 MB cap) with `requestBatchWithRetry` (one auto-retry on `server_busy` after 1 s, longer per-chunk timeout); chunk-level `too large` falls back to single `POST /estimate-weight` per item; per-item `Retry` buttons (`batch-retry`, `retryOne` via single endpoint) for server failures; `DataTransfer` drop/paste helpers + `clearSelection`; `setInterval` health poll (30 s, skipped when hidden) + `online`/`offline` handling; `server_busy` friendly message; unit toggle preserves batch retry state via `historyId`. Still `textContent`-only, no storage.
+  - `web/styles.css`: `#clear-button` + `.batch-retry` secondary styles (145 non-blank lines, under the 200 cap).
+  - `backend/tests/server.rs`: new `index_has_clear_button_and_drop_hint`, `js_uses_batch_endpoint_with_retry_and_file_helpers`, `css_has_clear_and_retry_styles` guards.
+  - Docs: `README.md` WebUI bullets (single batch call, chunking, per-item retry + busy retry, drop/paste/clear, 30 s health polling).
+- **Verification:** `cargo test` 117 pass (57 lib + 60 integration), `cargo fmt --check` clean, release build OK, `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage`; live smoke of `POST /estimate-batch` against the release binary shows per-item isolation (502 ollama-no-key + 200 tape in one batch).
