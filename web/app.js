@@ -60,6 +60,11 @@
   let currentController = null;
   let previewUrls = [];
   let demoEntries = [];
+  // Last batch context for per-item retry: files + shared payload fields.
+  let lastBatchContext = null;
+  // Batch POST shares the 20 MB body cap, so chunks stay well under it.
+  const BATCH_CHUNK_BYTES = 18 * 1024 * 1024;
+  const HEALTH_POLL_MS = 30_000;
 
   function setStatus(message) {
     status.textContent = message;
@@ -239,6 +244,7 @@
     revokePreviews();
     const files = Array.from(input.files || []);
     fileList.replaceChildren();
+    if (clearButton) clearButton.hidden = files.length === 0;
     if (!files.length) {
       fileList.hidden = true;
       return;
@@ -312,6 +318,111 @@
     }
   }
 
+  function sleepMs(ms, signal) {
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(resolve, ms);
+      if (signal) {
+        if (signal.aborted) {
+          window.clearTimeout(timer);
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        } else {
+          signal.addEventListener("abort", () => {
+            window.clearTimeout(timer);
+            reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+          }, { once: true });
+        }
+      }
+    });
+  }
+
+  async function requestBatch(items, externalSignal) {
+    const controller = new AbortController();
+    currentController = controller;
+    const onAbort = () => controller.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort();
+      else externalSignal.addEventListener("abort", onAbort, { once: true });
+    }
+    const timeoutMs = Math.min(600_000, 30_000 + items.length * 90_000);
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch("/estimate-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+        signal: controller.signal,
+      });
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (_error) {
+        data = {};
+      }
+      let headerId = "";
+      try {
+        headerId = response.headers.get("x-request-id") || "";
+      } catch (_error) {
+        headerId = "";
+      }
+      const requestId = headerId || (typeof data.request_id === "string" ? data.request_id : "");
+      if (!response.ok) throw { status: response.status, payload: data, requestId };
+      if (!Array.isArray(data.results)) throw { status: 0, payload: data, requestId };
+      return { results: data.results, parentRequestId: requestId };
+    } finally {
+      window.clearTimeout(timeout);
+      if (externalSignal) externalSignal.removeEventListener("abort", onAbort);
+      if (currentController === controller) currentController = null;
+    }
+  }
+
+  function isBusyError(error) {
+    const payload = (error && error.payload) || {};
+    return error && error.status === 503 && payload.code === "server_busy";
+  }
+
+  async function requestBatchWithRetry(items, externalSignal) {
+    try {
+      return await requestBatch(items, externalSignal);
+    } catch (error) {
+      if (isBusyError(error) && !cancelRequested && !(externalSignal && externalSignal.aborted)) {
+        setStatus("Server is busy — retrying once…");
+        await sleepMs(1000, externalSignal);
+        return await requestBatch(items, externalSignal);
+      }
+      throw error;
+    }
+  }
+
+  async function requestEstimateWithRetry(body, externalSignal) {
+    try {
+      return await requestEstimate(body, externalSignal);
+    } catch (error) {
+      if (isBusyError(error) && !cancelRequested && !(externalSignal && externalSignal.aborted)) {
+        await sleepMs(1000, externalSignal);
+        return await requestEstimate(body, externalSignal);
+      }
+      throw error;
+    }
+  }
+
+  function chunkBatchItems(items, names, indices) {
+    const chunks = [];
+    let current = { items: [], names: [], indices: [], bytes: 2 };
+    for (let i = 0; i < items.length; i += 1) {
+      const size = JSON.stringify(items[i]).length + 64;
+      if (current.items.length > 0 && current.bytes + size > BATCH_CHUNK_BYTES) {
+        chunks.push(current);
+        current = { items: [], names: [], indices: [], bytes: 2 };
+      }
+      current.items.push(items[i]);
+      current.names.push(names[i]);
+      current.indices.push(indices[i]);
+      current.bytes += size;
+    }
+    if (current.items.length) chunks.push(current);
+    return chunks;
+  }
+
   function errorMessage(error) {
     if (error && error.name === "AbortError") {
       if (cancelRequested) return "Cancelled.";
@@ -327,6 +438,7 @@
     if (code === "missing_image") return withRef("Choose an image before estimating.");
     if (code === "invalid_image") return withRef("That file is not a supported image. Use JPEG, PNG, WebP, BMP, or GIF.");
     if (code === "estimation_failed") return withRef("The estimator could not complete the request. Try again.");
+    if (code === "server_busy") return withRef("The server is busy. Wait a moment, then retry.");
     if (code === "invalid_options" || code === "missing_body" || code === "invalid_json") {
       return withRef("The request was rejected. Check the file and try again.");
     }
@@ -370,6 +482,18 @@
       weight.textContent = entry.label;
       item.append(name, weight);
       if (!entry.ok) item.classList.add("invalid");
+      if (!entry.ok && typeof entry.fileIndex === "number" && entry.retryable) {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "batch-retry";
+        retry.textContent = "Retry";
+        retry.setAttribute("aria-label", `Retry estimate for ${entry.filename}`);
+        retry.disabled = busy;
+        retry.addEventListener("click", () => {
+          void retryOne(entry.fileIndex);
+        });
+        item.append(retry);
+      }
       batchList.append(item);
     }
   }
@@ -515,11 +639,55 @@
     if (sexSelect) sexSelect.disabled = next;
     if (ageInput) ageInput.disabled = next;
     input.disabled = next;
+    if (clearButton) clearButton.disabled = next;
     cancelButton.hidden = !next;
     progress.hidden = !next;
     if (!next) {
       currentController = null;
       progress.setAttribute("aria-valuenow", "0");
+    } else {
+      renderBatchRefreshRetryState();
+    }
+  }
+
+  function renderBatchRefreshRetryState() {
+    const buttons = batchList.querySelectorAll("button.batch-retry");
+    for (const element of buttons) {
+      element.disabled = busy;
+    }
+  }
+
+  function setInputFiles(files) {
+    const transfer = new DataTransfer();
+    for (const file of files) transfer.items.add(file);
+    input.files = transfer.files;
+    renderFileList();
+  }
+
+  function appendInputFiles(newFiles) {
+    const merged = Array.from(input.files || []);
+    for (const file of newFiles) merged.push(file);
+    setInputFiles(merged);
+  }
+
+  function clearSelection() {
+    if (busy) return;
+    try {
+      setInputFiles([]);
+    } catch (_error) {
+      try {
+        input.value = "";
+      } catch (_clearError) {
+        // Clearing is best-effort; the list render below still resets state.
+      }
+      renderFileList();
+    }
+    renderBatch([]);
+    setStatus("Selection cleared.");
+    try {
+      input.focus({ preventScroll: true });
+    } catch (_focusError) {
+      // Focus is a convenience only.
     }
   }
 
@@ -527,6 +695,74 @@
     const pct = total ? Math.round((done / total) * 100) : 0;
     progress.setAttribute("aria-valuenow", String(pct));
     progress.textContent = total ? `Estimating ${Math.min(done + 1, total)} of ${total}… ${pct}%` : "";
+  }
+
+  function applyBatchItem(filename, entry) {
+    if (entry && entry.status === 200 && entry.body
+        && typeof entry.body.estimated_weight_kg === "number") {
+      const body = entry.body;
+      const rid = typeof body.request_id === "string" ? body.request_id : "";
+      if (rid) body._requestId = rid;
+      pushHistory(filename, body, "upload");
+      const saved = history[0];
+      return { ok: true, label: historyLabel(saved), retryable: false, historyId: saved.id };
+    }
+    const payload = (entry && entry.body) || {};
+    const rid = (entry && entry.body && typeof entry.body.request_id === "string")
+      ? entry.body.request_id
+      : "";
+    const message = errorMessage({ status: entry ? entry.status : 0, payload, requestId: rid });
+    showResult(`${filename}: estimate failed.`, message);
+    return { ok: false, label: "failed", retryable: true };
+  }
+
+  async function retryOne(fileIndex) {
+    if (busy || !lastBatchContext) return;
+    const found = lastBatchContext.entries.find((item) => item.fileIndex === fileIndex);
+    if (!found) return;
+    const profile = readAnimalProfile();
+    if (!profile) {
+      setStatus("Check the animal details — breed, sex, or age needs attention.");
+      return;
+    }
+    setBusy(true);
+    cancelRequested = false;
+    const retrySignal = new AbortController();
+    setStatus(`Retrying ${found.filename}…`);
+    try {
+      const dataUrl = await fileToDataUrl(found.file);
+      if (cancelRequested) return;
+      const result = await requestEstimateWithRetry(
+        { image_base64: dataUrl, ...profile, ...lastBatchContext.crossFields },
+        retrySignal.signal,
+      );
+      pushHistory(found.filename, result, "upload");
+      const batchEntries = lastBatchContext.batchEntries;
+      const slot = batchEntries.find((item) => item.fileIndex === fileIndex);
+      if (slot) {
+        slot.ok = true;
+        slot.retryable = false;
+        slot.label = historyLabel(history[0]);
+        slot.historyId = history[0].id;
+      }
+      renderBatch(batchEntries);
+      setStatus("Done.");
+    } catch (error) {
+      if (cancelRequested) {
+        setStatus("Cancelled.");
+        return;
+      }
+      const message = errorMessage(error);
+      showResult(`${found.filename}: estimate failed.`, message);
+      setStatus("Failed. Try again.");
+    } finally {
+      setBusy(false);
+    }
+    try {
+      resultArea.focus({ preventScroll: false });
+    } catch (_error) {
+      // Focus is a convenience only.
+    }
   }
 
   async function runEstimates() {
@@ -551,51 +787,157 @@
     let succeeded = 0;
     let failed = 0;
     let cancelled = false;
+    let done = 0;
+    const validItems = [];
+    const validNames = [];
+    const validIndices = [];
+    const retryFiles = [];
     for (let index = 0; index < files.length; index += 1) {
-      if (cancelRequested) {
-        cancelled = true;
-        break;
-      }
       const file = files[index];
-      updateProgress(index, files.length);
-      setStatus(`Estimating ${index + 1} of ${files.length} — ${file.name}…`);
       const problem = fileProblem(file);
       if (problem) {
         failed += 1;
+        done += 1;
         const label = problem === "unsupported type" ? "unsupported file type" : "file is too large";
         const hint = problem === "unsupported type"
           ? "Use JPEG, PNG, WebP, BMP, or GIF."
           : `Choose a file under ${formatBytes(MAX_FILE_BYTES)}.`;
         showResult(`${file.name}: ${label}.`, hint);
-        batchEntries.push({ filename: file.name, label: `${label}`, ok: false });
+        batchEntries.push({ filename: file.name, label: `${label}`, ok: false, retryable: false });
         renderBatch(batchEntries);
-        continue;
-      }
-      try {
-        const dataUrl = await fileToDataUrl(file);
-        if (cancelRequested) {
-          cancelled = true;
-          break;
-        }
-        const result = await requestEstimate({ image_base64: dataUrl, ...profile, ...crossFields }, batchSignal.signal);
-        pushHistory(file.name, result, "upload");
-        succeeded += 1;
-        batchEntries.push({ filename: file.name, label: historyLabel(history[0]), ok: true });
-        renderBatch(batchEntries);
-      } catch (error) {
-        if (cancelRequested) {
-          cancelled = true;
-          break;
-        }
-        failed += 1;
-        const message = errorMessage(error);
-        showResult(`${file.name}: estimate failed.`, message);
-        batchEntries.push({ filename: file.name, label: "failed", ok: false });
-        renderBatch(batchEntries);
+        updateProgress(done, files.length);
+      } else {
+        retryFiles.push({ fileIndex: index, filename: file.name, file });
       }
     }
+    lastBatchContext = { entries: retryFiles, crossFields, batchEntries };
+    if (retryFiles.length && !cancelRequested) {
+      setStatus(`Preparing ${retryFiles.length} photo${retryFiles.length === 1 ? "" : "s"}…`);
+      for (let i = 0; i < retryFiles.length; i += 1) {
+        if (cancelRequested) {
+          cancelled = true;
+          break;
+        }
+        const item = retryFiles[i];
+        updateProgress(done, files.length);
+        setStatus(`Preparing ${i + 1} of ${retryFiles.length} — ${item.filename}…`);
+        try {
+          const dataUrl = await fileToDataUrl(item.file);
+          if (cancelRequested) {
+            cancelled = true;
+            break;
+          }
+          validItems.push({ image_base64: dataUrl, ...profile, ...crossFields });
+          validNames.push(item.filename);
+          validIndices.push(item.fileIndex);
+        } catch (error) {
+          failed += 1;
+          done += 1;
+          const message = error instanceof Error ? error.message : "Could not read file.";
+          showResult(`${item.filename}: estimate failed.`, message);
+          batchEntries.push({
+            filename: item.filename, label: "failed", ok: false,
+            fileIndex: item.fileIndex, retryable: true,
+          });
+          renderBatch(batchEntries);
+        }
+      }
+    }
+    if (validItems.length && !cancelRequested) {
+      const chunks = chunkBatchItems(validItems, validNames, validIndices);
+      for (let c = 0; c < chunks.length; c += 1) {
+        if (cancelRequested) {
+          cancelled = true;
+          break;
+        }
+        const chunk = chunks[c];
+        setStatus(`Estimating batch ${c + 1} of ${chunks.length} — ${chunk.names.length} photo${chunk.names.length === 1 ? "" : "s"}…`);
+        try {
+          const batch = await requestBatchWithRetry(chunk.items, batchSignal.signal);
+          for (let j = 0; j < chunk.items.length; j += 1) {
+            if (cancelRequested) {
+              cancelled = true;
+              break;
+            }
+            const filename = chunk.names[j];
+            const fileIndex = chunk.indices[j];
+            const applied = applyBatchItem(filename, batch.results[j]);
+            done += 1;
+            if (applied.ok) succeeded += 1;
+            else failed += 1;
+            batchEntries.push({
+              filename, label: applied.label, ok: applied.ok,
+              fileIndex, retryable: applied.retryable, historyId: applied.historyId,
+            });
+            renderBatch(batchEntries);
+            updateProgress(done, files.length);
+          }
+        } catch (error) {
+          if (cancelRequested || batchSignal.signal.aborted) {
+            cancelled = true;
+            break;
+          }
+          const tooLarge = error && error.status === 400
+            && typeof error.payload?.error === "string"
+            && error.payload.error.toLowerCase().includes("too large");
+          if (tooLarge) {
+            for (let j = 0; j < chunk.items.length; j += 1) {
+              if (cancelRequested) {
+                cancelled = true;
+                break;
+              }
+              const filename = chunk.names[j];
+              const fileIndex = chunk.indices[j];
+              setStatus(`Retrying ${filename} on its own…`);
+              try {
+                const single = await requestEstimateWithRetry(chunk.items[j], batchSignal.signal);
+                pushHistory(filename, single, "upload");
+                succeeded += 1;
+                done += 1;
+                batchEntries.push({
+                  filename, label: historyLabel(history[0]), ok: true,
+                  fileIndex, retryable: false, historyId: history[0].id,
+                });
+              } catch (singleError) {
+                if (cancelRequested) {
+                  cancelled = true;
+                  break;
+                }
+                failed += 1;
+                done += 1;
+                showResult(`${filename}: estimate failed.`, errorMessage(singleError));
+                batchEntries.push({
+                  filename, label: "failed", ok: false,
+                  fileIndex, retryable: true,
+                });
+              }
+              renderBatch(batchEntries);
+              updateProgress(done, files.length);
+            }
+          } else {
+            for (let j = 0; j < chunk.items.length; j += 1) {
+              failed += 1;
+              done += 1;
+              const filename = chunk.names[j];
+              const fileIndex = chunk.indices[j];
+              showResult(`${filename}: estimate failed.`, errorMessage(error));
+              batchEntries.push({
+                filename, label: "failed", ok: false,
+                fileIndex, retryable: true,
+              });
+            }
+            renderBatch(batchEntries);
+            updateProgress(done, files.length);
+          }
+        }
+      }
+    } else if (!retryFiles.length) {
+      done = files.length;
+    }
+    if (cancelRequested) cancelled = true;
     progress.setAttribute("aria-valuenow", "100");
     setBusy(false);
+    renderBatch(batchEntries);
     const tapeNote = crossCheck.skipped ? " Tape cross-check skipped — needs both 50–300 cm." : "";
     if (cancelled) {
       setStatus(`Cancelled — ${succeeded} estimated, ${failed} failed.${tapeNote}`);
@@ -878,8 +1220,17 @@
       showResult(described.title, described.detail, described.meta || stamp);
     }
     renderHistory();
-    const batch = history.slice().reverse().map((e) => ({ filename: e.filename, label: historyLabel(e), ok: true }));
-    if (batch.length) renderBatch(batch.slice(-Math.min(batch.length, 20)));
+    if (lastBatchContext && lastBatchContext.batchEntries.length) {
+      for (const item of lastBatchContext.batchEntries) {
+        if (!item.ok || typeof item.historyId !== "number") continue;
+        const found = history.find((entry) => entry.id === item.historyId);
+        if (found) item.label = historyLabel(found);
+      }
+      renderBatch(lastBatchContext.batchEntries);
+    } else {
+      const batch = history.slice().reverse().map((e) => ({ filename: e.filename, label: historyLabel(e), ok: true }));
+      if (batch.length) renderBatch(batch.slice(-Math.min(batch.length, 20)));
+    }
   }
 
   async function runDemo() {
@@ -901,7 +1252,7 @@
     setDemoStatus(`Estimating ${label}…`);
     try {
       const url = new URL(`/demo-cows/${encodeURIComponent(id)}`, window.location.origin).toString();
-      const result = await requestEstimate({ image_url: url, ...profile });
+      const result = await requestEstimateWithRetry({ image_url: url, ...profile });
       pushHistory(label, result, "demo");
       setStatus("Done.");
       setDemoStatus("Done.");
@@ -942,7 +1293,7 @@
     setTapeStatus(`Estimating from tape (${girth} × ${length} cm)…`);
     setStatus(`Estimating from tape measurements…`);
     try {
-      const result = await requestEstimate({ heart_girth_cm: girth, body_length_cm: length, ...profile });
+      const result = await requestEstimateWithRetry({ heart_girth_cm: girth, body_length_cm: length, ...profile });
       const label = `Tape ${girth}×${length} cm`;
       pushHistory(label, result, "tape");
       setStatus("Done.");
@@ -967,6 +1318,7 @@
 
   button.addEventListener("click", runEstimates);
   cancelButton.addEventListener("click", requestCancel);
+  if (clearButton) clearButton.addEventListener("click", clearSelection);
   if (tapeButton) tapeButton.addEventListener("click", runTape);
   demoRetry.addEventListener("click", loadDemos);
   demoSelect.addEventListener("change", () => {
@@ -977,6 +1329,42 @@
   historyClear.addEventListener("click", clearHistory);
   if (historyExport) historyExport.addEventListener("click", exportHistoryCsv);
   input.addEventListener("change", renderFileList);
+  document.addEventListener("dragover", (event) => {
+    const types = event.dataTransfer ? Array.from(event.dataTransfer.types || []) : [];
+    if (types.includes("Files")) event.preventDefault();
+  });
+  document.addEventListener("drop", (event) => {
+    const files = event.dataTransfer ? event.dataTransfer.files : null;
+    if (!files || !files.length) return;
+    event.preventDefault();
+    if (busy) {
+      setStatus("Busy — wait for the current run to finish.");
+      return;
+    }
+    appendInputFiles(Array.from(files));
+    setStatus(`${files.length} file${files.length === 1 ? "" : "s"} added — press Estimate Weight.`);
+  });
+  document.addEventListener("paste", (event) => {
+    const files = event.clipboardData ? event.clipboardData.files : null;
+    if (!files || !files.length) return;
+    const images = Array.from(files).filter((file) => file.type.startsWith("image/"));
+    if (!images.length) return;
+    event.preventDefault();
+    if (busy) {
+      setStatus("Busy — wait for the current run to finish.");
+      return;
+    }
+    appendInputFiles(images);
+    setStatus(`${images.length} pasted image${images.length === 1 ? "" : "s"} added — press Estimate Weight.`);
+  });
+  window.addEventListener("online", () => {
+    void checkHealth();
+  });
+  window.addEventListener("offline", () => {
+    healthPill.textContent = "Backend unavailable";
+    backendLabel.textContent = "";
+    if (!busy) setStatus("You are offline — the local backend cannot be reached.");
+  });
   setStatus("Choose images to begin.");
   setDemoStatus("");
   setTapeStatus("");
@@ -984,5 +1372,9 @@
   renderHistory();
   renderBatch([]);
   void checkHealth();
+  window.setInterval(() => {
+    if (document.hidden) return;
+    void checkHealth();
+  }, HEALTH_POLL_MS);
   void loadDemos();
 })();

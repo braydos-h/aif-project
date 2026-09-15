@@ -33,9 +33,14 @@ of silently using defaults.
 The browser app supports:
 
 - batch image selection (JPEG, PNG, WebP, BMP, and GIF) with type and size
-  checks; large photos are resized in the browser before upload;
-- one **Estimate Weight** button that estimates each selected image in turn,
-  showing per-image progress and a final succeeded/failed count;
+  checks; large photos are resized in the browser before upload; files can
+  also be added by drag-and-drop anywhere on the page or by pasting images,
+  and the selection can be cleared before estimating;
+- one **Estimate Weight** button that sends the batch in one `POST
+  /estimate-batch` call (chunked to stay under the 20 MB body cap),
+  showing per-image progress and a final succeeded/failed count, with
+  per-item **Retry** for failed photos and one automatic retry on
+  `503 server_busy`;
 - optional animal details (breed, sex, age) sent with every estimate to
   sharpen the AI guess;
 - tape measurements double as a photo cross-check: fill them in before
@@ -48,7 +53,8 @@ The browser app supports:
   Schaeffer estimates with no photo needed;
 - weight ranges on every result (±10% photo, ±5% tape) and a dosing warning
   on every result and in the footer;
-- live status updates, dark-mode support, and a responsive single-column
+- live status updates, backend health badge polled every 30 seconds with
+  offline detection, dark-mode support, and a responsive single-column
   layout.
 
 Selected files are not uploaded until **Estimate Weight** is pressed. Backend,

@@ -75,6 +75,23 @@ button {
   border: 1px solid var(--line);
 }
 
+#clear-button {
+  justify-self: start;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.batch-retry {
+  min-height: 0;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  flex: none;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
 #unit-toggle:hover { background: var(--line); }
 
 footer { margin-top: 8px; }

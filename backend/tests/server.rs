@@ -1138,3 +1138,44 @@ fn js_renders_range_tape_and_disclaimer_safely() {
     assert!(!js.contains("localStorage"));
     assert!(!js.contains("sessionStorage"));
 }
+
+#[test]
+fn index_has_clear_button_and_drop_hint() {
+    let html = web_file("index.html");
+    for needle in [r#"id="clear-button""#, "drag and drop", "paste"] {
+        assert!(html.contains(needle), "index.html missing {}", needle);
+    }
+}
+
+#[test]
+fn js_uses_batch_endpoint_with_retry_and_file_helpers() {
+    let js = web_file("app.js");
+    for needle in [
+        "estimate-batch",
+        "estimate-weight",
+        "server_busy",
+        "batch-retry",
+        "retryOne",
+        "DataTransfer",
+        "clear-button",
+        "setInterval",
+        "online",
+        "offline",
+        "drop",
+        "paste",
+        "BATCH_CHUNK_BYTES",
+    ] {
+        assert!(js.contains(needle), "app.js missing {}", needle);
+    }
+    assert!(js.contains("textContent"));
+    assert!(!js.contains("innerHTML"));
+    assert!(!js.contains("localStorage"));
+    assert!(!js.contains("sessionStorage"));
+}
+
+#[test]
+fn css_has_clear_and_retry_styles() {
+    let css = web_file("styles.css");
+    assert!(css.contains("#clear-button"));
+    assert!(css.contains(".batch-retry"));
+}
