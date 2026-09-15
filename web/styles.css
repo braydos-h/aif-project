@@ -56,7 +56,19 @@ button {
   cursor: pointer;
 }
 
+#unit-toggle {
+  justify-self: start;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+#unit-toggle:hover { background: var(--line); }
+
 footer { margin-top: 8px; }
+
+ul { margin: 4px 0 0; padding-left: 20px; }
+li { margin: 2px 0; }
 
 @media print {
   button, input, select { display: none; }

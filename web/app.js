@@ -17,12 +17,15 @@
   const button = $("estimate-button");
   const demoSelect = $("demo-select");
   const demoButton = $("demo-button");
+  const unitToggle = $("unit-toggle");
   const status = $("status");
   const resultArea = $("result-area");
   const historyList = $("history-list");
   const historyEmpty = $("history-empty");
   // In-memory only: cleared on reload, never persisted anywhere.
   const history = [];
+  let displayUnit = "kg";
+  let lastShown = null;
 
   function setStatus(message) {
     status.textContent = message;
@@ -110,11 +113,58 @@
       const name = document.createElement("strong");
       name.textContent = entry.filename;
       const weight = document.createElement("span");
-      const lbs = entry.lbs === null ? "" : ` (${entry.lbs} lb)`;
-      weight.textContent = `${entry.kg} kg${lbs} · ${entry.source}`;
+      weight.textContent = historyLabel(entry);
       item.append(name, weight);
       historyList.append(item);
     }
+  }
+
+  function formatConfidence(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    return `${Math.round(value * 100)}% confident`;
+  }
+
+  function formatScore(value) {
+    return typeof value === "number" && Number.isFinite(value) ? `BCS ${value.toFixed(1)}` : null;
+  }
+
+  function sanityNotes(result) {
+    const notes = [];
+    const kg = result.estimated_weight_kg;
+    if (typeof kg === "number" && Number.isFinite(kg) && (kg < 200 || kg > 1200)) {
+      notes.push("Outside the typical 200–1200 kg range — retake a side photo and verify with a scale.");
+    }
+    const confidence = result.confidence;
+    if (typeof confidence === "number" && Number.isFinite(confidence) && confidence < 0.5) {
+      notes.push("Low confidence — retake in better light with the full body visible.");
+    }
+    if (result.source === "local_fallback") {
+      notes.push("Offline placeholder — connect Ollama for an AI estimate.");
+    }
+    return notes;
+  }
+
+  function describeResult(filename, result) {
+    const kg = formatWeight(result.estimated_weight_kg);
+    const lbs = typeof result.estimated_weight_lbs === "number"
+      ? formatWeight(result.estimated_weight_lbs)
+      : null;
+    const source = typeof result.source === "string" ? result.source : "unknown";
+    const breed = typeof result.breed === "string" && result.breed ? result.breed : null;
+    const confidence = formatConfidence(result.confidence);
+    const score = formatScore(result.body_condition_score);
+    const notes = sanityNotes(result);
+    const primary = displayUnit === "lb" && lbs !== null ? `${lbs} lb` : `${kg} kg`;
+    const secondary = displayUnit === "lb" && lbs !== null ? `${kg} kg` : (lbs === null ? null : `${lbs} lb`);
+    const parts = [secondary, source, breed, confidence, score].filter(Boolean);
+    const detail = parts.join(" · ") + (notes.length ? ` — ${notes.join(" ")}` : "");
+    return { title: `${filename}: ${primary}`, detail };
+  }
+
+  function historyLabel(entry) {
+    const primary = displayUnit === "lb" && entry.lbs !== null ? `${entry.lbs} lb` : `${entry.kg} kg`;
+    const rest = [entry.source, entry.breed, entry.confidence, entry.score].filter(Boolean);
+    return rest.length ? `${primary} · ${rest.join(" · ")}` : primary;
   }
 
   async function runEstimates() {
@@ -193,15 +243,32 @@
   }
 
   function pushHistory(filename, result) {
-    const kg = formatWeight(result.estimated_weight_kg);
-    const lbs = typeof result.estimated_weight_lbs === "number"
-      ? formatWeight(result.estimated_weight_lbs)
-      : null;
-    const source = typeof result.source === "string" ? result.source : "unknown";
-    const breed = typeof result.breed === "string" && result.breed ? ` · ${result.breed}` : "";
-    showResult(`${filename}: ${kg} kg`, lbs === null ? `${source}${breed}` : `${lbs} lb · ${source}${breed}`);
-    history.unshift({ filename, kg, lbs, source });
+    const described = describeResult(filename, result);
+    showResult(described.title, described.detail);
+    lastShown = { filename, result };
+    const breed = typeof result.breed === "string" && result.breed ? result.breed : null;
+    history.unshift({
+      filename,
+      kg: formatWeight(result.estimated_weight_kg),
+      lbs: typeof result.estimated_weight_lbs === "number"
+        ? formatWeight(result.estimated_weight_lbs)
+        : null,
+      source: typeof result.source === "string" ? result.source : "unknown",
+      breed,
+      confidence: formatConfidence(result.confidence),
+      score: formatScore(result.body_condition_score),
+    });
     if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
+    renderHistory();
+  }
+
+  function toggleUnits() {
+    displayUnit = displayUnit === "kg" ? "lb" : "kg";
+    unitToggle.textContent = displayUnit === "kg" ? "Show in lb" : "Show in kg";
+    if (lastShown) {
+      const described = describeResult(lastShown.filename, lastShown.result);
+      showResult(described.title, described.detail);
+    }
     renderHistory();
   }
 
@@ -228,6 +295,7 @@
 
   button.addEventListener("click", runEstimates);
   demoButton.addEventListener("click", runDemo);
+  unitToggle.addEventListener("click", toggleUnits);
   setStatus("Choose images to begin.");
   renderHistory();
   void checkHealth();

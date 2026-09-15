@@ -671,3 +671,28 @@ fn css_has_touch_targets_and_print_rules() {
     assert!(css.contains("min-height: 44px"));
     assert!(css.contains("@media print"));
 }
+
+#[test]
+fn accuracy_trust_helpers_render_extras_and_warnings() {
+    let html = web_file("index.html");
+    for needle in [
+        r#"id="unit-toggle""#,
+        r#"id="photo-heading""#,
+        "Good photo tips",
+    ] {
+        assert!(html.contains(needle), "index.html missing {}", needle);
+    }
+    let js = web_file("app.js");
+    for needle in [
+        "unit-toggle",
+        "confidence",
+        "body_condition_score",
+        "Outside the typical",
+        "Low confidence",
+        "Offline placeholder",
+    ] {
+        assert!(js.contains(needle), "app.js missing {}", needle);
+    }
+    assert!(js.contains("textContent"));
+    assert!(!js.contains("innerHTML"));
+}

@@ -710,3 +710,12 @@
   - Docs: `AGENTS.md` important-paths + `CONTRIBUTING.md` layout and `http/` references updated; `commits.md` history untouched.
   - Largest backend file now ~170 lines (`parse/text.rs`); every `http/` file ≤ ~140 lines.
 - **Verification:** `cargo test` green (41 unit + 33 integration, incl. real-HTTP and WebUI guards); `cargo fmt --check` clean; release build OK; no warnings. `web/` and `backend/tests/server.rs` untouched (frontend split would break static guards; test harness is sectioned, not mixed-concern).
+
+## 2026-09-15 03:02 UTC (session: accuracy + trust batch)
+- **Context:** backend already returned `confidence`/`breed`/`body_condition_score` but the WebUI dropped confidence + BCS and showed breed only; no out-of-range/low-confidence guidance, no photo tips, no kg/lb toggle.
+- **Change (`web/` only, no new routes/deps):**
+  - `web/app.js`: new `describeResult`/`sanityNotes`/`historyLabel` path renders breed + `82% confident` + `BCS 6.0` via `textContent`-only DOM; flags <200 kg or >1200 kg, confidence <0.5, and `local_fallback` offline-placeholder notes; in-memory `displayUnit` kg/lb toggle re-renders latest result + history.
+  - `web/index.html`: `unit-toggle` button + `photo-heading` side-profile/lighting/framing tips section; all existing ids preserved, no settings-clutter ids.
+  - `web/styles.css`: secondary style for `unit-toggle` + tips list spacing (100 non-blank lines, under the 200 cap).
+  - `backend/tests/server.rs`: new `accuracy_trust_helpers_render_extras_and_warnings` guard for the toggle/tips ids and extras/warning strings plus `textContent`-only check.
+- **Verification:** `cargo test` 75 pass (41 lib + 34 integration), `cargo fmt --check` clean, `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage`.
