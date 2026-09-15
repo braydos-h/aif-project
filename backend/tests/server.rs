@@ -604,28 +604,45 @@ fn truncated_body_returns_400_json() {
 
 #[test]
 fn over_limit_image_url_rejected() {
-    // Serve a >20 MiB blob locally; route to the ollama path so the fetch
-    // size check runs (backend=none never fetches URLs). The dummy
-    // ollama_url is never contacted: validation runs first, host != ollama.com.
+    // Loopback image URLs are refused by the SSRF guard before any fetch,
+    // so the fake origin below may never see a connection: accept with a
+    // deadline instead of blocking forever. Either path (SSRF block or
+    // size check) surfaces as 400 invalid_image. The byte-limit logic
+    // itself is covered by `validate::image` unit tests.
     let blob_len = 20 * 1024 * 1024 + 1;
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
     let img_port = listener.local_addr().unwrap().port();
     let handle = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut head = [0u8; 4096];
-        let _ = stream.read(&mut head);
-        let header = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            blob_len
-        );
-        stream.write_all(header.as_bytes()).unwrap();
-        stream.write_all(b"\x89PNG\r\n\x1a\n").unwrap();
-        let zeros = vec![0u8; 64 * 1024];
-        let mut remaining = blob_len - 8;
-        while remaining > 0 {
-            let n = remaining.min(zeros.len());
-            stream.write_all(&zeros[..n]).unwrap();
-            remaining -= n;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+                    let mut head = [0u8; 4096];
+                    let _ = stream.read(&mut head);
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        blob_len
+                    );
+                    stream.write_all(header.as_bytes()).unwrap();
+                    stream.write_all(b"\x89PNG\r\n\x1a\n").unwrap();
+                    let zeros = vec![0u8; 64 * 1024];
+                    let mut remaining = blob_len - 8;
+                    while remaining > 0 {
+                        let n = remaining.min(zeros.len());
+                        if stream.write_all(&zeros[..n]).is_err() {
+                            break;
+                        }
+                        remaining -= n;
+                    }
+                    return;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(_) => return,
+            }
         }
     });
     let server = setup_none();
@@ -637,6 +654,68 @@ fn over_limit_image_url_rejected() {
     handle.join().ok();
     assert_eq!(status, 400);
     assert_eq!(body["code"], "invalid_image");
+}
+
+#[test]
+fn private_image_url_is_blocked_before_fetch() {
+    // SSRF guard: loopback / private / metadata hosts are refused with
+    // 400 invalid_image and never fetched (no fake origin needed).
+    let server = setup_none();
+    for host in [
+        "127.0.0.1:9",
+        "10.0.0.5",
+        "192.168.1.20",
+        "169.254.169.254",
+        "localhost:9",
+    ] {
+        let payload = format!(
+            r#"{{"image_url": "http://{}/cow.jpg", "backend": "ollama", "ollama_url": "http://127.0.0.1:9/api/generate"}}"#,
+            host
+        );
+        let (status, _, body) = post_json(&server, &payload);
+        assert_eq!(status, 400, "expected block for {}", host);
+        assert_eq!(body["code"], "invalid_image");
+        let text = serde_json::to_string(&body).unwrap();
+        assert!(text.contains("blocked"), "got: {}", text);
+    }
+}
+
+#[test]
+fn metrics_endpoint_reports_counters() {
+    let server = setup_none();
+    let (status, headers, body) = get_json(&server, "/metrics");
+    assert_eq!(status, 200);
+    assert_eq!(headers["access-control-allow-origin"], "*");
+    assert!(body.get("request_id").is_some());
+    assert!(body.get("version").is_some());
+    assert_eq!(body["backend"], "none");
+    for field in [
+        "uptime_secs",
+        "total_requests",
+        "active_connections",
+        "rejected_connections",
+        "cache_entries",
+    ] {
+        assert!(
+            body.get(field).is_some(),
+            "metrics missing {}: {}",
+            field,
+            body
+        );
+    }
+    assert!(!serde_json::to_string(&body)
+        .unwrap()
+        .contains("OLLAMA_API_KEY"));
+}
+
+#[test]
+fn health_reports_uptime_and_connections() {
+    let server = setup_none();
+    let (status, _, body) = get_json(&server, "/health");
+    assert_eq!(status, 200);
+    assert_eq!(body["status"], "ok");
+    assert!(body.get("uptime_secs").is_some());
+    assert!(body.get("active_connections").is_some());
 }
 
 #[test]

@@ -1,19 +1,54 @@
 //! Threaded HTTP/1.1 connection handling on `std::net`.
 //!
-//! One thread per connection; one request per connection
-//! (`Connection: close`). Reads the request line, headers, and body, then
-//! hands off to [`super::dispatch`] for routing.
+//! One thread per connection, bounded by [`MAX_CONCURRENT_CONNECTIONS`];
+//! one request per connection (`Connection: close`). Reads the request
+//! line, headers, and body, then hands off to [`super::dispatch`] for
+//! routing. Connections arriving above the cap get an immediate `503
+//! server_busy` JSON response instead of spawning another thread's work.
 
 use std::io::{BufRead, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use super::request_id::new_request_id;
-use super::response::{error_json, write_response, Response, CODE_INVALID_JSON};
+use super::response::{error_json, write_response, Response, CODE_INVALID_JSON, CODE_SERVER_BUSY};
 use super::validation::MAX_BODY_BYTES;
 use super::{dispatch, ServerState};
+
+/// Max simultaneous connections handled. Excess connections are refused
+/// with `503 server_busy` so one burst cannot exhaust threads/memory.
+/// 64 comfortably covers the WebUI (sequential batch + demo + tape) while
+/// bounding worst-case thread use on small field machines.
+pub const MAX_CONCURRENT_CONNECTIONS: usize = 64;
+
+/// RAII guard: increments the active count on entry, decrements on drop so
+/// every early return still releases its slot.
+struct ActiveGuard<'a> {
+    metrics: &'a crate::http::ServerMetrics,
+}
+
+impl<'a> ActiveGuard<'a> {
+    fn enter(metrics: &'a crate::http::ServerMetrics) -> Option<Self> {
+        let prev = metrics.active_connections.fetch_add(1, Ordering::SeqCst);
+        if prev >= MAX_CONCURRENT_CONNECTIONS {
+            metrics.active_connections.fetch_sub(1, Ordering::SeqCst);
+            metrics.record_rejected();
+            return None;
+        }
+        Some(ActiveGuard { metrics })
+    }
+}
+
+impl Drop for ActiveGuard<'_> {
+    fn drop(&mut self) {
+        self.metrics
+            .active_connections
+            .fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 /// Serve on `host:port` (port 0 picks an ephemeral port, printed on stdout
 /// so the launcher can read it). Blocks forever.
@@ -86,6 +121,18 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
     let request_id = new_request_id();
+    // Bound concurrency before doing any I/O-bound work.
+    let Some(_guard) = ActiveGuard::enter(&state.metrics) else {
+        let response = Response::json(
+            503,
+            error_json(
+                CODE_SERVER_BUSY,
+                "Server is busy; try again shortly",
+                &request_id,
+            ),
+        );
+        return write_response(&mut stream, &request_id, &response);
+    };
     let mut reader = BufReader::new(stream.try_clone()?);
 
     let Some(head) = read_request_head(&mut reader)? else {
@@ -114,4 +161,15 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
 
     let response = dispatch(&head.method, &head.path, &body, &request_id, state);
     write_response(&mut stream, &request_id, &response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn concurrency_cap_is_sane() {
+        assert!(MAX_CONCURRENT_CONNECTIONS >= 16);
+        assert!(MAX_CONCURRENT_CONNECTIONS <= 256);
+    }
 }

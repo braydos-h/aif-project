@@ -16,6 +16,7 @@ pub(crate) const CODE_INVALID_IMAGE: &str = "invalid_image";
 pub(crate) const CODE_INVALID_OPTIONS: &str = "invalid_options";
 pub(crate) const CODE_NOT_FOUND: &str = "not_found";
 pub(crate) const CODE_ESTIMATION_FAILED: &str = "estimation_failed";
+pub(crate) const CODE_SERVER_BUSY: &str = "server_busy";
 
 /// A finished HTTP response.
 pub(crate) struct Response {
@@ -52,7 +53,9 @@ pub(crate) fn status_text(status: u16) -> &'static str {
         204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
+        429 => "Too Many Requests",
         502 => "Bad Gateway",
+        503 => "Service Unavailable",
         _ => "Error",
     }
 }

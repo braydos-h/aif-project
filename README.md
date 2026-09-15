@@ -82,7 +82,8 @@ and the tests are all Rust (plus plain browser HTML/CSS/JavaScript).
 | `GET` | `/styles.css` | WebUI stylesheet |
 | `GET` | `/app.js` | WebUI JavaScript |
 | `GET` | `/info` | Safe JSON application/configuration information |
-| `GET` | `/health` | Liveness and effective backend/model |
+| `GET` | `/health` | Liveness, effective backend/model, uptime, live connections |
+| `GET` | `/metrics` | Operator counters: uptime, totals, live/rejected connections, cache size |
 | `GET` | `/demo-cows` | Controlled list of bundled demo images |
 | `GET` | `/demo-cows/{id}` | One approved bundled demo image (`1`, `2`, or `3`) |
 | `POST` | `/estimate-weight` | Single estimate (photo, tape, or both) |
@@ -197,9 +198,15 @@ own `{parent}-{index}` request id:
 ```
 
 Status codes are `200` for success, `400` for missing/malformed input,
-invalid images, or invalid runtime options, `404` for unknown routes, and
-`502` for an estimator/Ollama failure. Error bodies contain `error`, `code`,
-and `request_id`; the WebUI maps these to user-friendly messages.
+invalid images, or invalid runtime options, `404` for unknown routes, `502`
+for an estimator/Ollama failure, and `503` (`server_busy`) when more than 64
+connections arrive at once — retry shortly. Error bodies contain `error`,
+`code`, and `request_id`; the WebUI maps these to user-friendly messages.
+
+`image_url` downloads are SSRF-guarded: only public `http(s)` hosts are
+fetched (loopback, private, link-local, and `localhost`-style names are
+refused with `400 invalid_image`), redirects are not followed, and downloads
+are capped at 20 MiB.
 
 Example using the deterministic backend:
 

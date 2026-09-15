@@ -27,9 +27,6 @@ fn main() -> std::io::Result<()> {
         config.backend,
         config.model
     );
-    let state = Arc::new(ServerState {
-        cache: aif_backend::cache::Cache::new(config.cache_ttl),
-        config,
-    });
+    let state = Arc::new(ServerState::new(config));
     serve(state, &parsed.host, parsed.port)
 }
