@@ -17,10 +17,11 @@
 
     <label for="image-input">Choose images</label>
     <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple capture="environment">
-    <p id="limits-hint" class="note">JPEG, PNG, WebP, BMP, or GIF, 20 MB or less per file. Large photos are resized in your browser to upload faster. Files stay on this device until you press Estimate.</p>
+    <p id="limits-hint" class="note">JPEG, PNG, WebP, BMP, or GIF, 20 MB or less per file. Large photos are resized in your browser to upload faster. Files stay on this device until you press Estimate. You can also drag and drop files anywhere on this page or paste images from the clipboard.</p>
     <ul id="file-list" hidden aria-label="Selected files"></ul>
     <button id="estimate-button" type="button">Estimate Weight</button>
     <button id="cancel-button" type="button" hidden>Cancel</button>
+    <button id="clear-button" type="button" hidden>Clear selection</button>
     <p class="note">Tip: fill in the tape measurements below before estimating to attach a tape cross-check to each photo.</p>
     <div id="progress" role="progressbar" aria-label="Estimate progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden></div>
     <p id="status" role="status" aria-live="polite"></p>
