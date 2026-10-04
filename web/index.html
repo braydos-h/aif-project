@@ -10,13 +10,14 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#estimate-button">Skip to estimator</a>
   <main>
     <h1>Cow Weight Estimator</h1>
     <p class="note">Upload cow photos to get a weight estimate. Use a verified scale for purchase, dosing, or official records.</p>
     <p class="note" role="status">Status: <span id="health-pill">Checking backend…</span> <span id="backend-label"></span></p>
 
     <label for="image-input">Choose images</label>
-    <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple capture="environment">
+    <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple capture="environment" aria-describedby="limits-hint status">
     <p id="limits-hint" class="note">JPEG, PNG, WebP, BMP, or GIF, 20 MB or less per file. Large photos are resized in your browser to upload faster. Files stay on this device until you press Estimate. You can also drag and drop files anywhere on this page or paste images from the clipboard.</p>
     <ul id="file-list" hidden aria-label="Selected files"></ul>
     <button id="estimate-button" type="button">Estimate Weight</button>
@@ -62,7 +63,7 @@
       <div class="profile-row">
         <div>
           <label for="breed-input">Breed</label>
-          <input id="breed-input" type="text" maxlength="64" autocomplete="off" placeholder="e.g. Angus">
+          <input id="breed-input" type="text" maxlength="64" autocomplete="off" placeholder="e.g. Angus" aria-describedby="profile-status">
         </div>
         <div>
           <label for="sex-select">Sex</label>
@@ -77,7 +78,7 @@
         </div>
         <div>
           <label for="age-input">Age (years)</label>
-          <input id="age-input" type="number" min="0" max="30" step="0.5" inputmode="decimal" placeholder="e.g. 4">
+          <input id="age-input" type="number" min="0" max="30" step="0.5" inputmode="decimal" placeholder="e.g. 4" aria-describedby="profile-status">
         </div>
       </div>
       <p id="profile-status" class="note" role="status" aria-live="polite"></p>
@@ -89,11 +90,11 @@
       <div class="tape-row">
         <div>
           <label for="tape-girth">Heart girth (cm)</label>
-          <input id="tape-girth" type="number" min="50" max="300" step="0.5" inputmode="decimal" placeholder="e.g. 180">
+          <input id="tape-girth" type="number" min="50" max="300" step="0.5" inputmode="decimal" placeholder="e.g. 180" aria-describedby="tape-status">
         </div>
         <div>
           <label for="tape-length">Body length (cm)</label>
-          <input id="tape-length" type="number" min="50" max="300" step="0.5" inputmode="decimal" placeholder="e.g. 150">
+          <input id="tape-length" type="number" min="50" max="300" step="0.5" inputmode="decimal" placeholder="e.g. 150" aria-describedby="tape-status">
         </div>
       </div>
       <button id="tape-button" type="button">Estimate from tape</button>

@@ -62,6 +62,10 @@
   let demoEntries = [];
   // Last batch context for per-item retry: files + shared payload fields.
   let lastBatchContext = null;
+  // Last announced backend-health state ("online"/"offline"): the 30 s poll
+  // updates the pill silently and only writes the status line on transitions,
+  // so task results are never clobbered by routine polling.
+  let lastHealthState = "";
   // Batch POST shares the 20 MB body cap, so chunks stay well under it.
   const BATCH_CHUNK_BYTES = 18 * 1024 * 1024;
   const HEALTH_POLL_MS = 30_000;
@@ -80,6 +84,18 @@
 
   function setProfileStatus(message) {
     if (profileStatus) profileStatus.textContent = message;
+  }
+
+  function markInvalid(element, statusId) {
+    if (!element) return;
+    element.setAttribute("aria-invalid", "true");
+    if (statusId) element.setAttribute("aria-errormessage", statusId);
+  }
+
+  function clearInvalid(element) {
+    if (!element) return;
+    element.removeAttribute("aria-invalid");
+    element.removeAttribute("aria-errormessage");
   }
 
   function formatBytes(bytes) {
@@ -188,6 +204,7 @@
     if (breedRaw) {
       if (breedRaw.length > 64 || !/^[A-Za-z][A-Za-z '\-]*$/.test(breedRaw)) {
         setProfileStatus("Breed: use letters, spaces, and hyphens (max 64).");
+        markInvalid(breedInput, "profile-status");
         return null;
       }
       profile.animal_breed = breedRaw;
@@ -196,6 +213,7 @@
     if (sexRaw) {
       if (!ALLOWED_SEXES.has(sexRaw)) {
         setProfileStatus("Sex: choose one of the listed options.");
+        markInvalid(sexSelect, "profile-status");
         return null;
       }
       if (sexRaw !== "unknown") profile.animal_sex = sexRaw;
@@ -205,10 +223,14 @@
       const age = Number.parseFloat(ageRaw);
       if (!Number.isFinite(age) || age < 0 || age > 30) {
         setProfileStatus("Age must be between 0 and 30 years.");
+        markInvalid(ageInput, "profile-status");
         return null;
       }
       profile.animal_age_years = age;
     }
+    clearInvalid(breedInput);
+    clearInvalid(sexSelect);
+    clearInvalid(ageInput);
     setProfileStatus("");
     return profile;
   }
@@ -251,7 +273,7 @@
     }
     fileList.hidden = false;
     let ready = 0;
-    for (const file of files) {
+    files.forEach((file, fileIndex) => {
       const item = document.createElement("li");
       const problem = fileProblem(file);
       if (!problem) ready += 1;
@@ -266,12 +288,26 @@
       }
       const name = document.createElement("strong");
       name.textContent = file.name;
+      name.title = file.name;
       const meta = document.createElement("span");
       meta.textContent = problem ? `${formatBytes(file.size)} · ${problem}` : `${formatBytes(file.size)} · ready`;
       item.append(name, meta);
       if (problem) item.classList.add("invalid");
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "batch-retry";
+      remove.textContent = "Remove";
+      remove.setAttribute("aria-label", `Remove ${file.name} from selection`);
+      remove.disabled = busy;
+      remove.addEventListener("click", () => {
+        if (busy) return;
+        const remaining = Array.from(input.files || []).filter((_, index) => index !== fileIndex);
+        setInputFiles(remaining);
+        setStatus("File removed.");
+      });
+      item.append(remove);
       fileList.append(item);
-    }
+    });
     const blocked = files.length - ready;
     if (blocked > 0) {
       setStatus(`${ready} of ${files.length} ready — ${blocked} need attention before estimating.`);
@@ -478,6 +514,7 @@
       const item = document.createElement("li");
       const name = document.createElement("strong");
       name.textContent = entry.filename;
+      name.title = entry.filename;
       const weight = document.createElement("span");
       weight.textContent = entry.label;
       item.append(name, weight);
@@ -510,6 +547,7 @@
       top.className = "history-top";
       const name = document.createElement("strong");
       name.textContent = entry.filename;
+      name.title = entry.filename;
       const weight = document.createElement("span");
       weight.textContent = historyLabel(entry);
       top.append(name, weight);
@@ -647,6 +685,13 @@
       progress.setAttribute("aria-valuenow", "0");
     } else {
       renderBatchRefreshRetryState();
+      // Disabling the focused Estimate button would drop focus to <body>;
+      // move it to Cancel so keyboard users stay in control of the run.
+      try {
+        cancelButton.focus({ preventScroll: true });
+      } catch (_focusError) {
+        // Focus is a convenience only.
+      }
     }
   }
 
@@ -983,12 +1028,18 @@
       const model = typeof data.model === "string" ? data.model : "";
       const parts = [backend, model].filter(Boolean).join(" · ");
       backendLabel.textContent = parts ? `(${parts})` : "";
-      if (!busy) setStatus("Backend online — choose images to begin.");
+      if (!busy && lastHealthState !== "online") {
+        setStatus("Backend online — choose images to begin.");
+      }
+      lastHealthState = "online";
       void loadInfo();
     } catch (_error) {
       healthPill.textContent = "Backend unavailable";
       backendLabel.textContent = "";
-      if (!busy) setStatus("Backend unavailable — choose images to begin.");
+      if (!busy && lastHealthState !== "offline") {
+        setStatus("Backend unavailable — choose images to begin.");
+      }
+      lastHealthState = "offline";
     }
   }
 
@@ -1117,7 +1168,10 @@
 
   function csvCell(value) {
     const text = value === null || value === undefined ? "" : String(value);
-    return `"${text.replace(/"/g, '""')}"`;
+    // Guard against spreadsheet formula injection: values starting with a
+    // formula trigger are neutralized with a leading apostrophe.
+    const safe = /^[=+\-@\t]/.test(text) ? `'${text}` : text;
+    return `"${safe.replace(/"/g, '""')}"`;
   }
 
   function historyToCsv() {
@@ -1227,10 +1281,10 @@
         if (found) item.label = historyLabel(found);
       }
       renderBatch(lastBatchContext.batchEntries);
-    } else {
-      const batch = history.slice().reverse().map((e) => ({ filename: e.filename, label: historyLabel(e), ok: true }));
-      if (batch.length) renderBatch(batch.slice(-Math.min(batch.length, 20)));
     }
+    // Without a batch context there is nothing unit-aware to re-render: the
+    // batch list is left untouched so a cleared selection never repopulates
+    // from history and prior failure states are never rewritten as successes.
   }
 
   async function runDemo() {
@@ -1277,12 +1331,18 @@
     const length = Number.parseFloat(tapeLength.value);
     if (!Number.isFinite(girth) || !Number.isFinite(length)) {
       setTapeStatus("Enter both measurements in centimetres.");
+      markInvalid(tapeGirth, "tape-status");
+      markInvalid(tapeLength, "tape-status");
       return;
     }
     if (girth < 50 || girth > 300 || length < 50 || length > 300) {
       setTapeStatus("Measurements must be between 50 and 300 cm.");
+      markInvalid(tapeGirth, "tape-status");
+      markInvalid(tapeLength, "tape-status");
       return;
     }
+    clearInvalid(tapeGirth);
+    clearInvalid(tapeLength);
     const profile = readAnimalProfile();
     if (!profile) {
       setTapeStatus("Check the animal details above first.");
@@ -1363,6 +1423,7 @@
   window.addEventListener("offline", () => {
     healthPill.textContent = "Backend unavailable";
     backendLabel.textContent = "";
+    lastHealthState = "offline";
     if (!busy) setStatus("You are offline — the local backend cannot be reached.");
   });
   setStatus("Choose images to begin.");
