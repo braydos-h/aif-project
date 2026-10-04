@@ -803,3 +803,7 @@
 - Installed the pinned Rust 1.89.0 toolchain locally (direct `rustup-init`, winget had no installer). `cargo fmt` fixed 2 spots; `cargo check` caught a real error (`RequestHead` needed `#[derive(Debug)]` for `unwrap_err`); enforced Clippy surfaced 5 more issues (pre-existing `Cache::len` without `is_empty`, const-`assert!(true)` tests, `get().is_some()` → `contains_key`, manual range check) — all fixed.
 - Added 5 tests: `ActiveGuard` cap logic, ETag collision, Ollama 500→retry→200, 400→no-retry, and HTTP-level cache isolation via a scripted fake Ollama.
 - **Verification (all local):** `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` clean, `cargo test` 135 passed (67 lib + 68 integration), `cargo build --release` OK, `node --check web/app.js` OK.
+
+## 2026-10-04 (session follow-up: red-team closes)
+- Red-team review found per-request `ollama_url` SSRF-by-design and check-then-spawn race still open: per-request private/local `ollama_url` hosts are now refused (`400 invalid_options`, server default unrestricted; fake-Ollama tests moved to server-default config, `image_url` tests use a public override URL), and connection slots are now claimed atomically in the accept loop (`acquire_slot` + release-only guard, no spawn-before-cap). Header line reads are `take()`-bounded against newline-less floods.
+- **Verification (all local):** fmt/clippy clean, `cargo test` 136 passed (67 lib + 69 integration), release build OK.
