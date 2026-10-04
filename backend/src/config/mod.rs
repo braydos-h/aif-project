@@ -43,8 +43,15 @@ pub struct Config {
 impl Config {
     /// Build the config from env vars / `.env`.
     pub fn from_env() -> Config {
-        let cache_ttl = env_or("AIF_CACHE_TTL", &DEFAULT_CACHE_TTL.to_string())
-            .parse::<u64>()
+        let raw_ttl = env_or("AIF_CACHE_TTL", &DEFAULT_CACHE_TTL.to_string());
+        let parsed_ttl = raw_ttl.parse::<u64>();
+        if parsed_ttl.is_err() {
+            eprintln!(
+                "warning: invalid AIF_CACHE_TTL {:?}; using default {}",
+                raw_ttl, DEFAULT_CACHE_TTL
+            );
+        }
+        let cache_ttl = parsed_ttl
             .unwrap_or(DEFAULT_CACHE_TTL)
             .min(crate::cache::MAX_CACHE_TTL_SECS);
         let api_key = std::env::var("OLLAMA_API_KEY")

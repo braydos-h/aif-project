@@ -8,8 +8,11 @@ use std::net::TcpStream;
 
 use serde_json::{json, Value};
 
+use crate::hash::sha256_hex;
+
 /// Error codes shared with the JSON API.
 pub(crate) const CODE_MISSING_BODY: &str = "missing_body";
+pub(crate) const CODE_BAD_REQUEST: &str = "bad_request";
 pub(crate) const CODE_INVALID_JSON: &str = "invalid_json";
 pub(crate) const CODE_MISSING_IMAGE: &str = "missing_image";
 pub(crate) const CODE_INVALID_IMAGE: &str = "invalid_image";
@@ -96,9 +99,12 @@ pub(crate) fn write_response(
             || response.content_type.contains("javascript")
             || response.content_type.starts_with("image/"))
     {
+        // Content hash, not length: two different bodies with the same
+        // length must never share an ETag.
+        let digest = sha256_hex(&response.body);
         format!(
             "Cache-Control: public, max-age=3600, immutable\r\nETag: \"{}\"\r\n",
-            response.body.len()
+            &digest[..16]
         )
     } else {
         String::new()

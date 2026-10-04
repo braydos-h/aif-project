@@ -38,7 +38,10 @@ impl Cache {
 
     /// Number of entries currently held, including unexpired ones.
     pub fn len(&self) -> usize {
-        self.entries.lock().unwrap().len()
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
     }
 
     fn enabled(&self) -> bool {
@@ -51,7 +54,12 @@ impl Cache {
         if !self.enabled() {
             return None;
         }
-        let mut entries = self.entries.lock().unwrap();
+        // Recover the contents on poison (a panicking holder must not wedge
+        // every later request) — a stale entry is better than a dead cache.
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let entry = entries.get(key)?;
         if Instant::now() > entry.expires_at {
             entries.remove(key);
@@ -66,7 +74,10 @@ impl Cache {
         if !self.enabled() {
             return;
         }
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !entries.contains_key(key) && entries.len() >= MAX_CACHE_ENTRIES {
             entries.retain(|_, e| Instant::now() <= e.expires_at);
             if entries.len() >= MAX_CACHE_ENTRIES {

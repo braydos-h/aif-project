@@ -42,6 +42,9 @@ impl TestServer {
         let mut cmd = Command::new(binary_path());
         cmd.args(["--host", "127.0.0.1", "--port", &port.to_string()]);
         cmd.env_remove("AIF_AI_BACKEND");
+        cmd.env_remove("AIF_AI_MODEL");
+        cmd.env_remove("AIF_OLLAMA_URL");
+        cmd.env_remove("AIF_CACHE_TTL");
         cmd.env_remove("OLLAMA_API_KEY");
         for (k, v) in env_extra {
             cmd.env(k, v);
@@ -600,6 +603,156 @@ fn truncated_body_returns_400_json() {
     let body_start = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
     let body: serde_json::Value = serde_json::from_slice(&raw[body_start..]).unwrap();
     assert!(body.get("request_id").is_some());
+}
+
+fn raw_post_status_and_body(port: u16, head: &[u8]) -> (String, serde_json::Value) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    stream.write_all(head).unwrap();
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).unwrap();
+    let text = String::from_utf8_lossy(&raw).to_string();
+    let body_start = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    let body: serde_json::Value = serde_json::from_slice(&raw[body_start..]).unwrap();
+    (text, body)
+}
+
+#[test]
+fn chunked_transfer_encoding_is_rejected() {
+    let server = setup_none();
+    let (text, body) = raw_post_status_and_body(
+        server.port,
+        b"POST /estimate-weight HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+    );
+    assert!(
+        text.starts_with("HTTP/1.1 400"),
+        "got: {}",
+        &text[..text.len().min(60)]
+    );
+    assert_eq!(body["code"], "bad_request");
+    assert!(body.get("request_id").is_some());
+}
+
+#[test]
+fn invalid_content_length_is_rejected() {
+    let server = setup_none();
+    let (text, body) = raw_post_status_and_body(
+        server.port,
+        b"POST /estimate-weight HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: abc\r\nConnection: close\r\n\r\n{}",
+    );
+    assert!(
+        text.starts_with("HTTP/1.1 400"),
+        "got: {}",
+        &text[..text.len().min(60)]
+    );
+    assert_eq!(body["code"], "bad_request");
+}
+
+#[test]
+fn duplicate_content_length_is_rejected() {
+    let server = setup_none();
+    let (text, body) = raw_post_status_and_body(
+        server.port,
+        b"POST /estimate-weight HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 2\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+    );
+    assert!(
+        text.starts_with("HTTP/1.1 400"),
+        "got: {}",
+        &text[..text.len().min(60)]
+    );
+    assert_eq!(body["code"], "bad_request");
+}
+
+#[test]
+fn oversize_body_is_rejected_before_reading() {
+    // A declared length over the 20 MiB cap is refused from the headers
+    // alone, so no 20 MB payload needs to be sent.
+    let server = setup_none();
+    let (text, body) = raw_post_status_and_body(
+        server.port,
+        b"POST /estimate-weight HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 20971521\r\nConnection: close\r\n\r\n",
+    );
+    assert!(
+        text.starts_with("HTTP/1.1 400"),
+        "got: {}",
+        &text[..text.len().min(60)]
+    );
+    assert_eq!(body["code"], "invalid_json");
+}
+
+#[test]
+fn server_api_key_is_not_forwarded_to_overridden_host() {
+    // A fake Ollama endpoint records the Authorization header it sees. The
+    // server is configured with a key for its default host; the request
+    // overrides `ollama_url` to the fake host without a key, so the
+    // server-side key must not be forwarded.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let fake_port = listener.local_addr().unwrap().port();
+    let seen_auth = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let seen_auth_server = std::sync::Arc::clone(&seen_auth);
+    let handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            if stream.read(&mut byte).unwrap() == 0 {
+                break;
+            }
+            head.push(byte[0]);
+            if head.len() > 65536 {
+                break;
+            }
+        }
+        let head_text = String::from_utf8_lossy(&head).to_string();
+        let mut auth = None;
+        let mut content_length = 0usize;
+        for line in head_text.lines().skip(1) {
+            if let Some((name, value)) = line.split_once(':') {
+                if name.eq_ignore_ascii_case("authorization") {
+                    auth = Some(value.trim().to_string());
+                }
+                if name.eq_ignore_ascii_case("content-length") {
+                    content_length = value.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+        let mut body = vec![0u8; content_length];
+        stream.read_exact(&mut body).ok();
+        *seen_auth_server.lock().unwrap() = auth;
+        let reply = r#"{"response": "{\"weight_kg\": 600, \"confidence\": 0.8}"}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            reply.len(),
+            reply
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    let server_secret = "server-side-secret-key";
+    let server = TestServer::new(&[
+        ("AIF_AI_BACKEND", "ollama"),
+        ("OLLAMA_API_KEY", server_secret),
+    ]);
+    let payload = format!(
+        r#"{{"image_base64": "{}", "ollama_url": "http://127.0.0.1:{}/api/generate"}}"#,
+        png_b64(),
+        fake_port
+    );
+    let (status, _, body) = post_json(&server, &payload);
+    handle.join().ok();
+    assert_eq!(status, 200);
+    assert_eq!(body["estimated_weight_kg"], 600.0);
+    let auth = seen_auth.lock().unwrap().clone();
+    assert!(
+        auth.is_none(),
+        "server key must not be forwarded, got: {:?}",
+        auth
+    );
 }
 
 #[test]
