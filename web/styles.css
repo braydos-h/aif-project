@@ -67,6 +67,11 @@ input[type="file"], select, input[type="number"] {
 .profile-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 8px 0; }
 .profile-row > div { display: grid; gap: 4px; min-width: 0; }
 @media (max-width: 480px) { .profile-row { grid-template-columns: 1fr; } }
+@media (max-width: 480px) {
+  #file-list li, .history-top { flex-wrap: wrap; }
+  #file-list strong, #history-list strong { white-space: normal; overflow-wrap: anywhere; }
+  .history-actions { flex-wrap: wrap; }
+}
 .history-actions { display: flex; gap: 8px; margin-top: 8px; }
 #history-chart { width: 100%; height: 72px; margin-top: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--muted); }
 #history-chart[hidden] { display: none; }

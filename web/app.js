@@ -434,6 +434,7 @@
       return await requestEstimate(body, externalSignal);
     } catch (error) {
       if (isBusyError(error) && !cancelRequested && !(externalSignal && externalSignal.aborted)) {
+        setStatus("Server is busy — retrying once…");
         await sleepMs(1000, externalSignal);
         return await requestEstimate(body, externalSignal);
       }
@@ -503,6 +504,17 @@
       ref.className = "detail meta";
       ref.textContent = meta;
       resultArea.append(ref);
+    }
+  }
+
+  // Move focus to the results only on failure: success is already announced
+  // via the live region, and stealing focus on every run harms mouse and
+  // keyboard users alike.
+  function focusResults() {
+    try {
+      resultArea.focus({ preventScroll: false });
+    } catch (_error) {
+      // Focus is a convenience only.
     }
   }
 
@@ -686,6 +698,13 @@
     if (!next) {
       currentController = null;
       progress.setAttribute("aria-valuenow", "0");
+      // If focus was parked on Cancel (now hidden), return it to Estimate
+      // instead of dropping it to <body>.
+      try {
+        if (document.activeElement === cancelButton) button.focus({ preventScroll: true });
+      } catch (_restoreError) {
+        // Focus is a convenience only.
+      }
     } else {
       renderBatchRefreshRetryState();
       // Disabling the focused Estimate button would drop focus to <body>;
@@ -773,15 +792,21 @@
       setStatus("Check the animal details — breed, sex, or age needs attention.");
       return;
     }
+    // Re-read the tape fields fresh: the snapshot from the original run goes
+    // stale as soon as the user corrects a measurement.
+    const crossCheck = readTapeCrossCheck();
+    const crossFields = crossCheck.skipped ? {} : crossCheck;
+    lastBatchContext.crossFields = crossFields;
     setBusy(true);
     cancelRequested = false;
     const retrySignal = new AbortController();
+    currentController = retrySignal;
     setStatus(`Retrying ${found.filename}…`);
     try {
       const dataUrl = await fileToDataUrl(found.file);
       if (cancelRequested) return;
       const result = await requestEstimateWithRetry(
-        { image_base64: dataUrl, ...profile, ...lastBatchContext.crossFields },
+        { image_base64: dataUrl, ...profile, ...crossFields },
         retrySignal.signal,
       );
       pushHistory(found.filename, result, "upload");
@@ -803,13 +828,9 @@
       const message = errorMessage(error);
       showResult(`${found.filename}: estimate failed.`, message);
       setStatus("Failed. Try again.");
+      focusResults();
     } finally {
       setBusy(false);
-    }
-    try {
-      resultArea.focus({ preventScroll: false });
-    } catch (_error) {
-      // Focus is a convenience only.
     }
   }
 
@@ -1002,11 +1023,7 @@
           : `${succeeded} estimated — see Batch results for details.${tapeNote}`,
       );
     }
-    try {
-      resultArea.focus({ preventScroll: false });
-    } catch (_error) {
-      // Focus is a convenience only; ignore when unavailable.
-    }
+    if (failed > 0) focusResults();
   }
 
   function requestCancel() {
@@ -1253,6 +1270,9 @@
     const title = document.createElementNS(SVG_NS, "title");
     title.textContent = `Weight trend across ${points.length} estimates, ${formatWeight(min)} to ${formatWeight(max)} kg`;
     historyChart.append(title);
+    // Keep the accessible name in sync with the data; the static
+    // aria-label alone would describe a stale chart.
+    historyChart.setAttribute("aria-label", title.textContent);
     const line = document.createElementNS(SVG_NS, "polyline");
     line.setAttribute("points", points.map((v, i) => `${posX(i).toFixed(1)},${posY(v).toFixed(1)}`).join(" "));
     line.setAttribute("fill", "none");
@@ -1325,14 +1345,10 @@
       showResult(`${label}: estimate failed.`, errorMessage(error));
       setStatus("Failed. Try again.");
       setDemoStatus("Estimate failed. Try again.");
+      focusResults();
     } finally {
       setBusy(false);
       demoButton.disabled = !demoSelect.value;
-    }
-    try {
-      resultArea.focus({ preventScroll: false });
-    } catch (_error) {
-      // Focus is a convenience only.
     }
   }
 
@@ -1377,13 +1393,9 @@
       showResult("Tape estimate failed.", friendly);
       setStatus("Failed. Try again.");
       setTapeStatus("Estimate failed. Check both measurements (50–300 cm).");
+      focusResults();
     } finally {
       setBusy(false);
-    }
-    try {
-      resultArea.focus({ preventScroll: false });
-    } catch (_error) {
-      // Focus is a convenience only.
     }
   }
 
