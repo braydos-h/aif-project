@@ -17,12 +17,18 @@ pub(crate) fn cache_key(image_b64: &str, model: &str, url: &str, prompt: &str) -
 /// Parse the hostname out of a URL string.
 ///
 /// Returns the lowercased host so case variants (`OLLAMA.COM` vs
-/// `ollama.com`) cannot bypass host-based checks.
+/// `ollama.com`) cannot bypass host-based checks. Bracketed IPv6 literals
+/// (`[::1]:8080`) are unbracketed so distinct hosts never compare equal.
 pub(crate) fn url_host(url: &str) -> Option<String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;
-    let host = rest.split(['/', ':', '?']).next().unwrap_or(rest);
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let host = if let Some(after_bracket) = authority.strip_prefix('[') {
+        after_bracket.split(']').next().unwrap_or("")
+    } else {
+        authority.split([':', '?']).next().unwrap_or(authority)
+    };
     if host.is_empty() {
         None
     } else {
@@ -65,6 +71,23 @@ mod tests {
         assert_eq!(
             url_host("http://LocalHost:11434/api/generate"),
             Some("localhost".to_string())
+        );
+    }
+
+    #[test]
+    fn url_host_handles_bracketed_ipv6() {
+        assert_eq!(
+            url_host("http://[::1]:11434/api/generate"),
+            Some("::1".to_string())
+        );
+        assert_eq!(
+            url_host("http://[fe80::1]/cow.jpg"),
+            Some("fe80::1".to_string())
+        );
+        // Distinct bracketed hosts must never compare equal.
+        assert_ne!(
+            url_host("http://[::1]:11434/api/generate"),
+            url_host("http://[fe80::1]:11434/api/generate")
         );
     }
 }

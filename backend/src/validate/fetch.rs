@@ -77,9 +77,9 @@ pub(crate) fn check_image_url_allowed(url: &str) -> Result<String, String> {
     // Resolution failures are allowed through — the fetch itself will then
     // fail with a clear network error instead of a misleading block message.
     let default_port = if scheme == "https" { 443 } else { 80 };
-    let port: u16 = host_port
-        .split(':')
-        .nth(1)
+    // Reuse the already-parsed port (bracket-aware) so the DNS backstop and
+    // the validation above never disagree about the URL.
+    let port: u16 = port_part
         .and_then(|p| p.split('/').next().unwrap_or(p).parse().ok())
         .unwrap_or(default_port);
     if let Ok(addrs) = (lower.as_str(), port).to_socket_addrs() {
