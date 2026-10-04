@@ -1,16 +1,15 @@
 .env
 build/
 dist/
-497789W-AIF10-AT1-Brayden-Habets \[Autosaved\].pptx
+*.pptx
 
 # Rust (backend)
 backend/target/
 target/
-/Horror
-/.presentation-work
-497789W-AIF10-AT1-Brayden-Habets - Project Expansion.pptx
-497789W-AIF10-AT1-Brayden-Habets \[Autosaved\] - EXPANDED.pptx
-*.pptx
-_expand_deck.py
-_tmp_inspect.py
-/docs/superpowers
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
