@@ -446,7 +446,10 @@
     let current = { items: [], names: [], indices: [], bytes: 2 };
     for (let i = 0; i < items.length; i += 1) {
       const size = JSON.stringify(items[i]).length + 64;
-      if (current.items.length > 0 && current.bytes + size > BATCH_CHUNK_BYTES) {
+      // Chunks respect both the shared 20 MB body cap and the server's
+      // 20-items-per-batch limit, so large selections never get rejected whole.
+      if (current.items.length > 0
+        && (current.bytes + size > BATCH_CHUNK_BYTES || current.items.length >= 20)) {
         chunks.push(current);
         current = { items: [], names: [], indices: [], bytes: 2 };
       }
@@ -990,6 +993,14 @@
       setStatus(succeeded ? `Done.${tapeNote}` : "Failed. Try again.");
     } else {
       setStatus(`Done — ${succeeded} estimated, ${failed} failed.${tapeNote}`);
+      // Multi-file runs announce one summary instead of leaving the last
+      // per-item result as the headline; the batch list keeps every item.
+      showResult(
+        "Batch complete.",
+        failed
+          ? `${succeeded} estimated, ${failed} failed — see Batch results for details.${tapeNote}`
+          : `${succeeded} estimated — see Batch results for details.${tapeNote}`,
+      );
     }
     try {
       resultArea.focus({ preventScroll: false });
@@ -1170,7 +1181,7 @@
     const text = value === null || value === undefined ? "" : String(value);
     // Guard against spreadsheet formula injection: values starting with a
     // formula trigger are neutralized with a leading apostrophe.
-    const safe = /^[=+\-@\t]/.test(text) ? `'${text}` : text;
+    const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
     return `"${safe.replace(/"/g, '""')}"`;
   }
 
