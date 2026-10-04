@@ -181,7 +181,8 @@ echoed `heart_girth_cm`/`body_length_cm`.
 Measure heart girth just behind the front legs and body length from chest
 to tail head, with the animal standing square.
 
-Optional animal details sharpen the AI guess. `animal_breed` is free text
+Optional animal details sharpen the AI guess on photo/demo estimates that
+reach the `ollama` backend. `animal_breed` is free text
 (letters, spaces, hyphens, apostrophes, max 64); `animal_sex` is one of `cow`, `bull`,
 `steer`, `heifer`, `calf`, or `unknown`; `animal_age_years` is 0–30. They
 are folded into the model prompt, echoed back as `animal_breed`/
@@ -226,7 +227,10 @@ invalid_options`. Error bodies contain `error`,
 `image_url` downloads are SSRF-guarded: only public `http(s)` hosts are
 fetched (loopback, private, link-local, and `localhost`-style names are
 refused with `400 invalid_image`), redirects are not followed, and downloads
-are capped at 20 MiB.
+are capped at 20 MiB. Note the per-request `ollama_url` override has no such
+host guard (it exists so the server can point at a local Ollama runtime);
+as a precaution the server never forwards its own `OLLAMA_API_KEY` to a
+different host unless the same request supplies its own key.
 
 Example using the deterministic backend:
 

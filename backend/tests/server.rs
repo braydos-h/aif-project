@@ -1004,7 +1004,7 @@ fn cors_header_on_success() {
     assert_eq!(headers["access-control-allow-origin"], "*");
 }
 
-// --- static WebUI guards (ports tests/test_webui.py) ---
+// --- static WebUI guards (served-asset contract: ids, strings, headers) ---
 
 fn web_file(name: &str) -> String {
     let path = format!("{}/../web/{}", env!("CARGO_MANIFEST_DIR"), name);
