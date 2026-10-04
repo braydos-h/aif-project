@@ -1,6 +1,4 @@
 //! Image magic-byte validation and download size limits.
-//!
-//! Mirrors `CowWeightEstimator._validate_image_bytes` in `aif/estimator.py`.
 
 use super::ImageValidationError;
 

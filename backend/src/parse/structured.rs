@@ -50,8 +50,12 @@ pub(crate) fn parse_json_block(text: &str) -> Option<(f64, Extras)> {
         extras.confidence = as_f64(c).filter(|v| v.is_finite() && (0.0..=1.0).contains(v));
     }
     if let Some(b) = obj.get("breed") {
+        // Model breed strings are short labels; ignore pathological blobs
+        // so a misbehaving upstream cannot bloat cached results.
         if let Some(s) = b.as_str() {
-            extras.breed = Some(s.to_string());
+            if s.len() <= 128 {
+                extras.breed = Some(s.to_string());
+            }
         }
     }
     if let Some(bcs) = obj.get("body_condition_score") {

@@ -151,8 +151,9 @@ mod tests {
     }
 
     #[test]
-    fn leading_dot_and_trailing_dot_match_python() {
-        // Python kg-regex needs \d+(\.\d+)?: ".5 kg" matches "5 kg" -> 5.0
+    fn leading_dot_and_trailing_dot_use_kg_number_shape() {
+        // The kg pattern needs digits before an optional fraction: ".5 kg"
+        // matches "5 kg" -> 5.0
         assert_eq!(extract_weight_from_text("10 and .5 kg"), Some(5.0));
         // "5. kg" is not a kg-match; bare-number fallback -> 10.0
         assert_eq!(extract_weight_from_text("10 and 5. kg"), Some(10.0));

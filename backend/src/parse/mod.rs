@@ -67,9 +67,9 @@ mod tests {
     }
 
     #[test]
-    fn nested_braces_rejected_like_python_regex() {
-        // Python's `\{[^{}]*\}` matches the innermost block; a nested block
-        // means the first "{" to the first "}" — mirrors that behavior.
+    fn nested_braces_use_innermost_block() {
+        // The scanner matches the first "{" to the first "}" without inner
+        // braces, so a nested block falls back to text extraction.
         let text = r#"{"weight_kg": 5, "meta": {"x": 1}}"#;
         // Our scanner stops at the first '}', giving `{"weight_kg": 5, "meta": {`...
         // which is invalid JSON, so it falls back to text extraction → 5.
@@ -78,8 +78,8 @@ mod tests {
     }
 
     #[test]
-    fn nested_json_matches_python_innermost_block() {
-        // Python: re.search(r"\{[^{}]*\}") finds the inner block -> 600.0
+    fn nested_json_prefers_innermost_weight() {
+        // The first braceless block found is the inner one -> 600.0
         let (weight, _) =
             parse_structured_response(r#"{"weight_kg": 100, "nested": {"weight_kg": 600}}"#)
                 .unwrap();

@@ -28,7 +28,7 @@ pub(crate) fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
             return Err("Image base64 payload is not valid base64".to_string());
         }
     }
-    if !bytes.len().is_multiple_of(4) {
+    if bytes.len() % 4 != 0 {
         return Err("Image base64 payload is not valid base64".to_string());
     }
     base64_decode_impl(bytes).ok_or_else(|| "Image base64 payload is not valid base64".to_string())

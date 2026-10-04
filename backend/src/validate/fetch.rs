@@ -40,18 +40,22 @@ pub(crate) fn check_image_url_allowed(url: &str) -> Result<String, String> {
         .or_else(|| url.strip_prefix("http://").map(|r| ("http", r)))
         .ok_or_else(|| "Image URL must start with http:// or https://.".to_string())?;
     let authority = rest.split('/').next().unwrap_or("");
-    // Strip optional port; keep the host for the SSRF check.
+    // Split host from port, handling bracketed IPv6 literals (`[::1]:8080`).
     let host_port = authority;
-    let host_raw = host_port.split(':').next().unwrap_or("");
-    let host = host_raw
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host_raw);
+    let (host_raw, port_part) = if let Some(after_bracket) = host_port.strip_prefix('[') {
+        let (host, after) = after_bracket.split_once(']').unwrap_or((after_bracket, ""));
+        let port = after.strip_prefix(':').filter(|p| !p.is_empty());
+        (host, port)
+    } else {
+        let mut parts = host_port.split(':');
+        (parts.next().unwrap_or(""), parts.next())
+    };
+    let host = host_raw;
     if host.is_empty() {
         return Err("Image URL must contain a hostname.".to_string());
     }
     // Validate an explicit port when present so `host:badport` fails fast.
-    if let Some(port_str) = host_port.split(':').nth(1) {
+    if let Some(port_str) = port_part {
         let port_str = port_str.split('/').next().unwrap_or(port_str);
         if port_str.parse::<u16>().is_err() {
             return Err("Image URL contains an invalid port.".to_string());
@@ -236,8 +240,14 @@ mod tests {
     #[test]
     fn loopback_ipv6_is_blocked() {
         assert!(check_image_url_allowed("http://[::1]/cow.jpg").is_err());
+        assert!(check_image_url_allowed("http://[::1]:8080/cow.jpg").is_err());
         assert!(check_image_url_allowed("http://[fe80::1]/cow.jpg").is_err());
         assert!(check_image_url_allowed("http://[fc00::1]/cow.jpg").is_err());
+    }
+
+    #[test]
+    fn public_ipv6_literal_passes_the_guard() {
+        assert!(check_image_url_allowed("https://[2606:4700:4700::1111]/cow.jpg").is_ok());
     }
 
     #[test]
