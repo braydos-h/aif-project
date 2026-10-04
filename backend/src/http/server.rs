@@ -262,6 +262,20 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
 mod tests {
     use super::*;
 
+    #[test]
+    fn connection_cap_rejects_over_limit() {
+        let metrics = crate::http::ServerMetrics::new();
+        let mut guards = Vec::new();
+        for _ in 0..MAX_CONCURRENT_CONNECTIONS {
+            guards.push(ActiveGuard::enter(&metrics).expect("slot under cap"));
+        }
+        assert_eq!(metrics.active(), MAX_CONCURRENT_CONNECTIONS);
+        assert!(ActiveGuard::enter(&metrics).is_none());
+        assert_eq!(metrics.rejected(), 1);
+        drop(guards);
+        assert_eq!(metrics.active(), 0);
+    }
+
     /// Feed raw bytes through the request-head parser over a loopback socket.
     fn head_for(request: &[u8]) -> std::io::Result<Option<RequestHead>> {
         use std::io::Write;

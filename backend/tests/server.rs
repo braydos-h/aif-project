@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 fn binary_path() -> String {
@@ -752,6 +753,136 @@ fn server_api_key_is_not_forwarded_to_overridden_host() {
         "server key must not be forwarded, got: {:?}",
         auth
     );
+}
+
+/// Scripted fake Ollama endpoint: serves exactly `script.len()` connections
+/// with the scripted `(status, body)` pairs in order, counting inbound hits.
+/// Exits on exhaustion or a 20 s deadline, so a client that over/under-calls
+/// fails the test loudly instead of hanging it.
+fn fake_ollama(
+    script: Vec<(u16, String)>,
+    hits: Arc<Mutex<usize>>,
+) -> (u16, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let handle = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut served = 0usize;
+        while served < script.len() && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        match stream.read(&mut byte) {
+                            Ok(0) | Err(_) => break,
+                            Ok(_) => head.push(byte[0]),
+                        }
+                        if head.len() > 65536 {
+                            break;
+                        }
+                    }
+                    let head_text = String::from_utf8_lossy(&head).to_string();
+                    let mut content_length = 0usize;
+                    for line in head_text.lines().skip(1) {
+                        if let Some((name, value)) = line.split_once(':') {
+                            if name.eq_ignore_ascii_case("content-length") {
+                                content_length = value.trim().parse().unwrap_or(0);
+                            }
+                        }
+                    }
+                    let mut body = vec![0u8; content_length];
+                    stream.read_exact(&mut body).ok();
+                    *hits.lock().unwrap() += 1;
+                    let (status, reply) = script[served].clone();
+                    served += 1;
+                    let reason = if status == 200 { "OK" } else { "Error" };
+                    let response = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        status, reason, reply.len(), reply
+                    );
+                    if stream.write_all(response.as_bytes()).is_err() {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    (port, handle)
+}
+
+fn ollama_success_reply() -> String {
+    r#"{"response": "{\"weight_kg\": 600, \"confidence\": 0.8}"}"#.to_string()
+}
+
+fn estimate_via_fake(server: &TestServer, fake_port: u16, extra: &str) -> (u16, serde_json::Value) {
+    let payload = format!(
+        r#"{{"image_base64": "{}", "ollama_url": "http://127.0.0.1:{}/api/generate"{}}}"#,
+        png_b64(),
+        fake_port,
+        extra
+    );
+    let (status, _, body) = post_json(server, &payload);
+    (status, body)
+}
+
+#[test]
+fn ollama_retries_transient_500_once() {
+    let hits = Arc::new(Mutex::new(0usize));
+    let (port, handle) = fake_ollama(
+        vec![
+            (500, r#"{"error": "busy"}"#.to_string()),
+            (200, ollama_success_reply()),
+        ],
+        Arc::clone(&hits),
+    );
+    let server = TestServer::new(&[("AIF_AI_BACKEND", "ollama")]);
+    let (status, body) = estimate_via_fake(&server, port, "");
+    handle.join().ok();
+    assert_eq!(status, 200);
+    assert_eq!(body["estimated_weight_kg"], 600.0);
+    assert_eq!(*hits.lock().unwrap(), 2);
+}
+
+#[test]
+fn ollama_does_not_retry_client_errors() {
+    let hits = Arc::new(Mutex::new(0usize));
+    let (port, handle) = fake_ollama(
+        vec![(400, r#"{"error": "bad key"}"#.to_string())],
+        Arc::clone(&hits),
+    );
+    let server = TestServer::new(&[("AIF_AI_BACKEND", "ollama")]);
+    let (status, body) = estimate_via_fake(&server, port, "");
+    handle.join().ok();
+    assert_eq!(status, 502);
+    assert_eq!(body["code"], "estimation_failed");
+    assert_eq!(*hits.lock().unwrap(), 1);
+}
+
+#[test]
+fn ollama_cache_isolates_request_configuration() {
+    let hits = Arc::new(Mutex::new(0usize));
+    let (port, handle) = fake_ollama(
+        vec![(200, ollama_success_reply()), (200, ollama_success_reply())],
+        Arc::clone(&hits),
+    );
+    let server = TestServer::new(&[("AIF_AI_BACKEND", "ollama")]);
+    // Same triple twice: second call is a cache hit, no new upstream call.
+    let (first, _) = estimate_via_fake(&server, port, "");
+    assert_eq!(first, 200);
+    let (second, _) = estimate_via_fake(&server, port, "");
+    assert_eq!(second, 200);
+    // Different prompt: different cache key, upstream is called again.
+    let (third, _) = estimate_via_fake(&server, port, r#", "prompt": "other prompt""#);
+    assert_eq!(third, 200);
+    handle.join().ok();
+    assert_eq!(*hits.lock().unwrap(), 2);
 }
 
 #[test]

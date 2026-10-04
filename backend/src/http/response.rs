@@ -76,6 +76,13 @@ pub(crate) fn with_request_id(payload: Value, request_id: &str) -> Value {
     payload
 }
 
+/// Content hash for static-asset ETags: first 16 hex chars of SHA-256.
+/// Length alone is not a hash — two different bodies with the same length
+/// must never share an ETag.
+pub(crate) fn static_etag(body: &[u8]) -> String {
+    sha256_hex(body)[..16].to_string()
+}
+
 /// Build the JSON error body with a machine-readable code.
 pub(crate) fn error_json(code: &str, message: &str, request_id: &str) -> Value {
     json!({
@@ -101,10 +108,10 @@ pub(crate) fn write_response(
     {
         // Content hash, not length: two different bodies with the same
         // length must never share an ETag.
-        let digest = sha256_hex(&response.body);
+        let digest = static_etag(&response.body);
         format!(
             "Cache-Control: public, max-age=3600, immutable\r\nETag: \"{}\"\r\n",
-            &digest[..16]
+            digest
         )
     } else {
         String::new()
@@ -132,4 +139,15 @@ pub(crate) fn write_response(
     stream.write_all(head.as_bytes())?;
     stream.write_all(&response.body)?;
     stream.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn etags_differ_for_same_length_bodies() {
+        assert_ne!(static_etag(b"abcd"), static_etag(b"abce"));
+        assert_eq!(static_etag(b"abcd").len(), 16);
+    }
 }
