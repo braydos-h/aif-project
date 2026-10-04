@@ -89,10 +89,12 @@ pub fn estimate_via_ollama(
         )));
     };
     let (weight_kg, extras) = match parse_structured_response(&text) {
-        Some(pair) => pair,
-        None => {
+        Some((weight_kg, extras)) if crate::parse::valid_weight_kg(weight_kg) => {
+            (weight_kg, extras)
+        }
+        _ => {
             return Err(Box::new(OllamaError(format!(
-                "Could not extract a weight from Ollama response: {:?}",
+                "Could not extract a valid weight from Ollama response: {:?}",
                 text
             ))));
         }

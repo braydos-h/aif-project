@@ -31,6 +31,7 @@ use super::ServerState;
 use crate::cache::Cache;
 use crate::config::{Config, DEFAULT_PROMPT};
 use crate::fallback::estimate_fallback;
+use crate::ollama::cache_key::url_host;
 use crate::ollama::estimate_via_ollama;
 use crate::tape::{estimate_tape, tape_weight_kg, validate_tape_measure, weight_range_kg};
 use crate::validate::ImageValidationError;
@@ -232,9 +233,19 @@ pub(crate) fn estimate_one(payload: &Value, request_id: &str, state: &ServerStat
             ),
         );
     }
-    let image_reference = image_reference.unwrap();
+    let Some(image_reference) = image_reference else {
+        return (
+            400,
+            error_json(
+                CODE_MISSING_IMAGE,
+                "Provide image_url, image_base64, or both heart_girth_cm and body_length_cm",
+                request_id,
+            ),
+        );
+    };
 
     let mut request_config = state.config.clone();
+    let mut ollama_url_override: Option<String> = None;
     for (field, target) in [
         ("backend", &mut request_config.backend),
         ("model", &mut request_config.model),
@@ -247,6 +258,9 @@ pub(crate) fn estimate_one(payload: &Value, request_id: &str, state: &ServerStat
             }
         };
         if let Some(value) = value {
+            if field == "ollama_url" {
+                ollama_url_override = Some(value.to_string());
+            }
             *target = value.to_string();
         }
     }
@@ -256,8 +270,19 @@ pub(crate) fn estimate_one(payload: &Value, request_id: &str, state: &ServerStat
             return (400, error_json(CODE_INVALID_OPTIONS, &message, request_id));
         }
     };
+    let explicit_key = matches!(api_key, Some(value) if !value.is_empty());
     if let Some(value) = api_key {
         request_config.ollama_api_key = (!value.is_empty()).then(|| value.to_string());
+    }
+    // Never forward the server-side API key to a different host than the one
+    // the server is configured for. A per-request `ollama_url` pointing
+    // elsewhere (local Ollama, test double, unrelated service) must not
+    // receive the server's bearer token unless the same request supplies its
+    // own key explicitly.
+    if let Some(url) = ollama_url_override {
+        if url_host(&url) != url_host(&state.config.ollama_url) && !explicit_key {
+            request_config.ollama_api_key = None;
+        }
     }
 
     if let Err(message) = validate_runtime_config(&request_config, &enriched_prompt) {
@@ -331,6 +356,11 @@ fn run_backend(
     match request_config.backend.as_str() {
         "none" => Ok(estimate_fallback(image_reference, prompt)),
         "ollama" => estimate_via_ollama(request_config, cache, image_reference, prompt),
-        _ => unreachable!("validate_runtime_config checked backend"),
+        // `validate_runtime_config` runs before dispatch, so any other value
+        // is a bug — but return a 502 rather than panicking the worker.
+        _ => Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Unsupported backend: {}", request_config.backend),
+        )) as Box<dyn std::error::Error>),
     }
 }

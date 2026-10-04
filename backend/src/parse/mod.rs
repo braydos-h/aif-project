@@ -20,6 +20,20 @@ pub struct Extras {
     pub body_condition_score: Option<f64>,
 }
 
+/// Plausible cattle weight bounds in kilograms.
+///
+/// Model output outside this range (negative, absurd, non-finite) is treated
+/// as unparseable at the call site rather than returned to clients.
+pub const MIN_PLAUSIBLE_WEIGHT_KG: f64 = 20.0;
+/// Upper bound for [`valid_weight_kg`] (heaviest bulls plus margin).
+pub const MAX_PLAUSIBLE_WEIGHT_KG: f64 = 2500.0;
+
+/// True for finite weights inside the plausible cattle range.
+pub fn valid_weight_kg(weight_kg: f64) -> bool {
+    weight_kg.is_finite()
+        && (MIN_PLAUSIBLE_WEIGHT_KG..=MAX_PLAUSIBLE_WEIGHT_KG).contains(&weight_kg)
+}
+
 /// Pull a weight + extras out of the model's reply.
 ///
 /// Returns `None` when no weight can be extracted.
@@ -70,5 +84,24 @@ mod tests {
             parse_structured_response(r#"{"weight_kg": 100, "nested": {"weight_kg": 600}}"#)
                 .unwrap();
         assert_eq!(weight, 600.0);
+    }
+
+    #[test]
+    fn implausible_weights_are_rejected() {
+        assert!(valid_weight_kg(20.0));
+        assert!(valid_weight_kg(612.0));
+        assert!(valid_weight_kg(2500.0));
+        for bad in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            -5.0,
+            0.0,
+            19.9,
+            2500.1,
+            1e12,
+        ] {
+            assert!(!valid_weight_kg(bad), "expected reject for {}", bad);
+        }
     }
 }

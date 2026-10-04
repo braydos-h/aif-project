@@ -45,7 +45,9 @@ pub(crate) fn parse_json_block(text: &str) -> Option<(f64, Extras)> {
     let weight_kg = as_f64(obj.get("weight_kg")?)?;
     let mut extras = Extras::default();
     if let Some(c) = obj.get("confidence") {
-        extras.confidence = as_f64(c);
+        // The model's self-score is informational, not a calibrated
+        // probability; ignore out-of-range values instead of echoing them.
+        extras.confidence = as_f64(c).filter(|v| v.is_finite() && (0.0..=1.0).contains(v));
     }
     if let Some(b) = obj.get("breed") {
         if let Some(s) = b.as_str() {
@@ -53,7 +55,8 @@ pub(crate) fn parse_json_block(text: &str) -> Option<(f64, Extras)> {
         }
     }
     if let Some(bcs) = obj.get("body_condition_score") {
-        extras.body_condition_score = as_f64(bcs);
+        extras.body_condition_score =
+            as_f64(bcs).filter(|v| v.is_finite() && (1.0..=9.0).contains(v));
     }
     Some((weight_kg, extras))
 }
@@ -82,5 +85,14 @@ mod tests {
     fn missing_weight_returns_none() {
         assert!(parse_json_block(r#"{"confidence": 0.5}"#).is_none());
         assert!(parse_json_block("no braces here").is_none());
+    }
+
+    #[test]
+    fn out_of_range_extras_are_ignored() {
+        let (_, extras) =
+            parse_json_block(r#"{"weight_kg": 500, "confidence": 7.5, "body_condition_score": 42}"#)
+                .unwrap();
+        assert_eq!(extras.confidence, None);
+        assert_eq!(extras.body_condition_score, None);
     }
 }

@@ -15,6 +15,9 @@ pub(crate) fn cache_key(image_b64: &str, model: &str, url: &str, prompt: &str) -
 }
 
 /// Parse the hostname out of a URL string.
+///
+/// Returns the lowercased host so case variants (`OLLAMA.COM` vs
+/// `ollama.com`) cannot bypass host-based checks.
 pub(crate) fn url_host(url: &str) -> Option<String> {
     let rest = url
         .strip_prefix("https://")
@@ -23,7 +26,7 @@ pub(crate) fn url_host(url: &str) -> Option<String> {
     if host.is_empty() {
         None
     } else {
-        Some(host.to_string())
+        Some(host.to_ascii_lowercase())
     }
 }
 
@@ -51,5 +54,17 @@ mod tests {
             Some("localhost".to_string())
         );
         assert_eq!(url_host("not-a-url"), None);
+    }
+
+    #[test]
+    fn url_host_is_case_insensitive() {
+        assert_eq!(
+            url_host("https://OLLAMA.COM/api/generate"),
+            Some("ollama.com".to_string())
+        );
+        assert_eq!(
+            url_host("http://LocalHost:11434/api/generate"),
+            Some("localhost".to_string())
+        );
     }
 }
