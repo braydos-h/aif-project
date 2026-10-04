@@ -1,9 +1,8 @@
 //! Real-HTTP tests against the release/debug backend binary.
 //!
-//! Ports `tests/test_server.py` (API contract over real sockets) and
-//! `tests/test_webui.py` (static WebUI guards). Stdlib only plus
-//! `serde_json` (already a main dependency): the binary is spawned on a
-//! free port per test and exercised with hand-rolled `TcpStream` HTTP.
+//! The API contract is exercised over real sockets (the binary is spawned
+//! on a free port per test with hand-rolled `TcpStream` HTTP), plus static
+//! WebUI guards. Stdlib only plus `serde_json` (already a main dependency).
 
 use std::collections::HashMap;
 use std::io::{Read, Write};

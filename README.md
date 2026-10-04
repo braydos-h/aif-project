@@ -10,8 +10,9 @@ an official livestock record.
 
 ## Quick start
 
-Prerequisites: Rust stable (via [rustup](https://rustup.rs/); Windows also
-needs the MSVC Build Tools linker, or use the GNU toolchain), plus a browser.
+Prerequisites: Rust (pinned to 1.89.0 by `rust-toolchain.toml`; minimum
+supported version 1.75 per `backend/Cargo.toml`; Windows also needs the MSVC
+Build Tools linker, or use the GNU toolchain), plus a browser.
 `node` is only needed for the `node --check web/app.js` syntax check that CI
 runs. `install.ps1` automates the Windows setup (installs Rust via winget,
 builds the release binary, creates a desktop shortcut).
@@ -29,9 +30,9 @@ For a shortcut that starts the server and opens the browser automatically,
 double-click `start_gui.bat` (or run `start_gui.ps1`); they launch the same
 binary and open the WebUI. `start.sh` is the Linux/macOS equivalent and
 `install.ps1` is the Windows first-time setup script. All launchers use
-`127.0.0.1:8080` by default; if the port is taken, start the binary manually
-with a different `--port` (e.g. `--port 8081`). The supported UI is the
-Rust-served WebUI.
+the fixed default `127.0.0.1:8080` and take no port argument; if the port is
+taken, start the binary manually with a different `--port` (e.g. `--port
+8081`). The supported UI is the Rust-served WebUI.
 
 CLI usage: `aif-backend [--host HOST] [--port PORT]`. Both `--flag value`
 and `--flag=value` forms work; `--help` prints usage and exits 0, while
