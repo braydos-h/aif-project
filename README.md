@@ -227,10 +227,11 @@ invalid_options`. Error bodies contain `error`,
 `image_url` downloads are SSRF-guarded: only public `http(s)` hosts are
 fetched (loopback, private, link-local, and `localhost`-style names are
 refused with `400 invalid_image`), redirects are not followed, and downloads
-are capped at 20 MiB. Note the per-request `ollama_url` override has no such
-host guard (it exists so the server can point at a local Ollama runtime);
-as a precaution the server never forwards its own `OLLAMA_API_KEY` to a
-different host unless the same request supplies its own key.
+are capped at 20 MiB. Per-request `ollama_url` overrides enforce the same
+private-host refusal (`400 invalid_options`); point the server itself at a
+local Ollama via `AIF_OLLAMA_URL` instead. As a precaution the server never
+forwards its own `OLLAMA_API_KEY` to a different host unless the same request
+supplies its own key.
 
 Example using the deterministic backend:
 

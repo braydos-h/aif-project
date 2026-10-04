@@ -34,6 +34,7 @@ use crate::fallback::estimate_fallback;
 use crate::ollama::cache_key::url_host;
 use crate::ollama::estimate_via_ollama;
 use crate::tape::{estimate_tape, tape_weight_kg, validate_tape_measure, weight_range_kg};
+use crate::validate::fetch::check_image_url_allowed;
 use crate::validate::ImageValidationError;
 
 /// Max items accepted by `POST /estimate-batch`. Bounds per-connection work:
@@ -280,6 +281,19 @@ pub(crate) fn estimate_one(payload: &Value, request_id: &str, state: &ServerStat
     // receive the server's bearer token unless the same request supplies its
     // own key explicitly.
     if let Some(url) = ollama_url_override {
+        // Per-request overrides additionally refuse private/local targets
+        // (same SSRF policy as `image_url`): point the *server* at a local
+        // Ollama via configuration instead of smuggling it per request.
+        if check_image_url_allowed(&url).is_err() {
+            return (
+                400,
+                error_json(
+                    CODE_INVALID_OPTIONS,
+                    "Ollama URL host is blocked (private or local address).",
+                    request_id,
+                ),
+            );
+        }
         if url_host(&url) != url_host(&state.config.ollama_url) && !explicit_key {
             request_config.ollama_api_key = None;
         }

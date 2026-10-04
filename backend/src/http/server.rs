@@ -32,21 +32,31 @@ pub const MAX_HEADER_COUNT: usize = 100;
 /// Max total header bytes per request (names + values).
 pub const MAX_HEADER_BYTES: usize = 32 * 1024;
 
-/// RAII guard: increments the active count on entry, decrements on drop so
-/// every early return still releases its slot.
+/// RAII guard: releases a previously acquired slot on drop so every early
+/// return still frees its connection count.
 struct ActiveGuard<'a> {
     metrics: &'a crate::http::ServerMetrics,
 }
 
+/// Atomically claim a connection slot before spawning any work. Returns
+/// false (recording the rejection) when at cap — the caller must refuse
+/// inline instead of spawning a thread. Because the increment and the cap
+/// check are one atomic step in the accept loop, a burst cannot spawn more
+/// threads than the cap allows.
+fn acquire_slot(metrics: &crate::http::ServerMetrics) -> bool {
+    let prev = metrics.active_connections.fetch_add(1, Ordering::SeqCst);
+    if prev >= MAX_CONCURRENT_CONNECTIONS {
+        metrics.active_connections.fetch_sub(1, Ordering::SeqCst);
+        metrics.record_rejected();
+        return false;
+    }
+    true
+}
+
 impl<'a> ActiveGuard<'a> {
-    fn enter(metrics: &'a crate::http::ServerMetrics) -> Option<Self> {
-        let prev = metrics.active_connections.fetch_add(1, Ordering::SeqCst);
-        if prev >= MAX_CONCURRENT_CONNECTIONS {
-            metrics.active_connections.fetch_sub(1, Ordering::SeqCst);
-            metrics.record_rejected();
-            return None;
-        }
-        Some(ActiveGuard { metrics })
+    /// Take ownership of an already-acquired slot; released on drop.
+    fn adopted(metrics: &'a crate::http::ServerMetrics) -> Self {
+        ActiveGuard { metrics }
     }
 }
 
@@ -67,13 +77,10 @@ pub fn serve(state: Arc<ServerState>, host: &str, port: u16) -> std::io::Result<
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                // Best-effort burst shedding before spawning a thread: the
-                // authoritative cap still runs inside `handle_connection`
-                // (which closes most of the check-then-spawn race), but
-                // refusing obvious overload here avoids a thread per excess
-                // socket during a burst.
-                if state.metrics.active() >= MAX_CONCURRENT_CONNECTIONS {
-                    state.metrics.record_rejected();
+                // Claim the slot atomically before spawning: over-cap
+                // connections are refused inline with 503 instead of
+                // costing a thread each during a burst.
+                if !acquire_slot(&state.metrics) {
                     state.metrics.record_request();
                     let request_id = new_request_id();
                     let response = Response::json(
@@ -114,8 +121,15 @@ fn invalid_data(message: &str) -> std::io::Error {
 }
 
 fn read_request_head(reader: &mut BufReader<TcpStream>) -> std::io::Result<Option<RequestHead>> {
+    // Each line read is bounded: `take` caps a single line so a newline-less
+    // flood is refused after the cap instead of buffering unboundedly.
     let mut request_line = String::new();
-    if reader.read_line(&mut request_line)? == 0 {
+    if reader
+        .by_ref()
+        .take((MAX_REQUEST_LINE_BYTES + 1) as u64)
+        .read_line(&mut request_line)?
+        == 0
+    {
         return Ok(None); // client closed before sending anything
     }
     if request_line.len() > MAX_REQUEST_LINE_BYTES {
@@ -137,7 +151,12 @@ fn read_request_head(reader: &mut BufReader<TcpStream>) -> std::io::Result<Optio
     let mut header_bytes = 0usize;
     loop {
         let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
+        if reader
+            .by_ref()
+            .take((MAX_HEADER_BYTES + 1) as u64)
+            .read_line(&mut line)?
+            == 0
+        {
             break;
         }
         let line = line.trim_end();
@@ -181,19 +200,9 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
     let request_id = new_request_id();
-    // Bound concurrency before doing any I/O-bound work.
-    let Some(_guard) = ActiveGuard::enter(&state.metrics) else {
-        state.metrics.record_request();
-        let response = Response::json(
-            503,
-            error_json(
-                CODE_SERVER_BUSY,
-                "Server is busy; try again shortly",
-                &request_id,
-            ),
-        );
-        return write_response(&mut stream, &request_id, &response);
-    };
+    // The accept loop already claimed this connection's slot; the guard
+    // below only releases it (every early return still frees the count).
+    let _guard = ActiveGuard::adopted(&state.metrics);
     let mut reader = BufReader::new(stream.try_clone()?);
 
     let head = match read_request_head(&mut reader) {
@@ -267,10 +276,11 @@ mod tests {
         let metrics = crate::http::ServerMetrics::new();
         let mut guards = Vec::new();
         for _ in 0..MAX_CONCURRENT_CONNECTIONS {
-            guards.push(ActiveGuard::enter(&metrics).expect("slot under cap"));
+            assert!(acquire_slot(&metrics));
+            guards.push(ActiveGuard::adopted(&metrics));
         }
         assert_eq!(metrics.active(), MAX_CONCURRENT_CONNECTIONS);
-        assert!(ActiveGuard::enter(&metrics).is_none());
+        assert!(!acquire_slot(&metrics));
         assert_eq!(metrics.rejected(), 1);
         drop(guards);
         assert_eq!(metrics.active(), 0);

@@ -684,11 +684,10 @@ fn oversize_body_is_rejected_before_reading() {
 }
 
 #[test]
-fn server_api_key_is_not_forwarded_to_overridden_host() {
+fn server_api_key_is_forwarded_to_configured_host() {
     // A fake Ollama endpoint records the Authorization header it sees. The
-    // server is configured with a key for its default host; the request
-    // overrides `ollama_url` to the fake host without a key, so the
-    // server-side key must not be forwarded.
+    // server is configured (via environment) with both the fake URL and a
+    // key, so the key must be forwarded to that configured host.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let fake_port = listener.local_addr().unwrap().port();
     let seen_auth = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
@@ -737,22 +736,42 @@ fn server_api_key_is_not_forwarded_to_overridden_host() {
     let server = TestServer::new(&[
         ("AIF_AI_BACKEND", "ollama"),
         ("OLLAMA_API_KEY", server_secret),
+        (
+            "AIF_OLLAMA_URL",
+            &format!("http://127.0.0.1:{}/api/generate", fake_port),
+        ),
     ]);
-    let payload = format!(
-        r#"{{"image_base64": "{}", "ollama_url": "http://127.0.0.1:{}/api/generate"}}"#,
-        png_b64(),
-        fake_port
-    );
+    let payload = format!(r#"{{"image_base64": "{}"}}"#, png_b64());
     let (status, _, body) = post_json(&server, &payload);
     handle.join().ok();
     assert_eq!(status, 200);
     assert_eq!(body["estimated_weight_kg"], 600.0);
     let auth = seen_auth.lock().unwrap().clone();
-    assert!(
-        auth.is_none(),
-        "server key must not be forwarded, got: {:?}",
-        auth
-    );
+    assert_eq!(auth.as_deref(), Some("Bearer server-side-secret-key"));
+}
+
+#[test]
+fn private_runtime_ollama_url_is_rejected() {
+    // Per-request `ollama_url` overrides refuse private/local targets with
+    // 400 invalid_options (same SSRF policy as `image_url`). Point the
+    // server itself at a local Ollama via configuration instead.
+    let server = setup_none();
+    for host in [
+        "127.0.0.1:11434",
+        "10.0.0.5",
+        "192.168.1.20",
+        "169.254.169.254",
+        "localhost:11434",
+    ] {
+        let payload = format!(
+            r#"{{"image_base64": "{}", "backend": "ollama", "ollama_url": "http://{}/api/generate"}}"#,
+            png_b64(),
+            host
+        );
+        let (status, _, body) = post_json(&server, &payload);
+        assert_eq!(status, 400, "expected block for {}", host);
+        assert_eq!(body["code"], "invalid_options");
+    }
 }
 
 /// Scripted fake Ollama endpoint: serves exactly `script.len()` connections
@@ -821,15 +840,22 @@ fn ollama_success_reply() -> String {
     r#"{"response": "{\"weight_kg\": 600, \"confidence\": 0.8}"}"#.to_string()
 }
 
-fn estimate_via_fake(server: &TestServer, fake_port: u16, extra: &str) -> (u16, serde_json::Value) {
-    let payload = format!(
-        r#"{{"image_base64": "{}", "ollama_url": "http://127.0.0.1:{}/api/generate"{}}}"#,
-        png_b64(),
-        fake_port,
-        extra
-    );
+fn estimate_via_fake(server: &TestServer, extra: &str) -> (u16, serde_json::Value) {
+    // The server under test points at the fake via its configured
+    // `AIF_OLLAMA_URL` (per-request private overrides are blocked).
+    let payload = format!(r#"{{"image_base64": "{}"{}}}"#, png_b64(), extra);
     let (status, _, body) = post_json(server, &payload);
     (status, body)
+}
+
+fn ollama_test_server(fake_port: u16) -> TestServer {
+    TestServer::new(&[
+        ("AIF_AI_BACKEND", "ollama"),
+        (
+            "AIF_OLLAMA_URL",
+            &format!("http://127.0.0.1:{}/api/generate", fake_port),
+        ),
+    ])
 }
 
 #[test]
@@ -842,8 +868,8 @@ fn ollama_retries_transient_500_once() {
         ],
         Arc::clone(&hits),
     );
-    let server = TestServer::new(&[("AIF_AI_BACKEND", "ollama")]);
-    let (status, body) = estimate_via_fake(&server, port, "");
+    let server = ollama_test_server(port);
+    let (status, body) = estimate_via_fake(&server, "");
     handle.join().ok();
     assert_eq!(status, 200);
     assert_eq!(body["estimated_weight_kg"], 600.0);
@@ -857,8 +883,8 @@ fn ollama_does_not_retry_client_errors() {
         vec![(400, r#"{"error": "bad key"}"#.to_string())],
         Arc::clone(&hits),
     );
-    let server = TestServer::new(&[("AIF_AI_BACKEND", "ollama")]);
-    let (status, body) = estimate_via_fake(&server, port, "");
+    let server = ollama_test_server(port);
+    let (status, body) = estimate_via_fake(&server, "");
     handle.join().ok();
     assert_eq!(status, 502);
     assert_eq!(body["code"], "estimation_failed");
@@ -872,14 +898,14 @@ fn ollama_cache_isolates_request_configuration() {
         vec![(200, ollama_success_reply()), (200, ollama_success_reply())],
         Arc::clone(&hits),
     );
-    let server = TestServer::new(&[("AIF_AI_BACKEND", "ollama")]);
+    let server = ollama_test_server(port);
     // Same triple twice: second call is a cache hit, no new upstream call.
-    let (first, _) = estimate_via_fake(&server, port, "");
+    let (first, _) = estimate_via_fake(&server, "");
     assert_eq!(first, 200);
-    let (second, _) = estimate_via_fake(&server, port, "");
+    let (second, _) = estimate_via_fake(&server, "");
     assert_eq!(second, 200);
     // Different prompt: different cache key, upstream is called again.
-    let (third, _) = estimate_via_fake(&server, port, r#", "prompt": "other prompt""#);
+    let (third, _) = estimate_via_fake(&server, r#", "prompt": "other prompt""#);
     assert_eq!(third, 200);
     handle.join().ok();
     assert_eq!(*hits.lock().unwrap(), 2);
@@ -930,7 +956,7 @@ fn over_limit_image_url_rejected() {
     });
     let server = setup_none();
     let payload = format!(
-        r#"{{"image_base64": null, "image_url": "http://127.0.0.1:{}/big.png", "backend": "ollama", "ollama_url": "http://127.0.0.1:9/api/generate"}}"#,
+        r#"{{"image_base64": null, "image_url": "http://127.0.0.1:{}/big.png", "backend": "ollama", "ollama_url": "https://example.com/api/generate"}}"#,
         img_port
     );
     let (status, _, body) = post_json(&server, &payload);
@@ -952,7 +978,7 @@ fn private_image_url_is_blocked_before_fetch() {
         "localhost:9",
     ] {
         let payload = format!(
-            r#"{{"image_url": "http://{}/cow.jpg", "backend": "ollama", "ollama_url": "http://127.0.0.1:9/api/generate"}}"#,
+            r#"{{"image_url": "http://{}/cow.jpg", "backend": "ollama", "ollama_url": "https://example.com/api/generate"}}"#,
             host
         );
         let (status, _, body) = post_json(&server, &payload);
