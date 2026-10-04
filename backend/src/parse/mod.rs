@@ -1,9 +1,7 @@
 //! Weight extraction from model output.
 //!
-//! Mirrors `CowWeightEstimator._parse_structured_response` /
-//! `_extract_weight_from_text` in `aif/estimator.py`: structured JSON first
-//! (`{"weight_kg": ...}` plus optional extras), then free-text extraction
-//! (prefers `<n> kg`, then the first bare number).
+//! Structured JSON first (`{"weight_kg": ...}` plus optional extras), then
+//! free-text extraction (prefers `<n> kg`, then the first bare number).
 //!
 //! Split into focused submodules:
 //! - [`structured`] — first `{...}` JSON block parsing.

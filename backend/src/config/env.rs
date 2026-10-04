@@ -1,15 +1,14 @@
 //! `.env` file loading and environment variable helpers.
 //!
 //! Values already present in the process environment take precedence over
-//! `.env` (same contract as `aif/config.py`).
+//! `.env`.
 
 use std::env;
 use std::path::Path;
 
 /// Locations probed for `.env`, in priority order: current directory,
 /// directory next to the running executable (installed binaries), then
-/// the source-tree root. Mirrors `aif/config.py::_env_candidates`
-/// (which probes exe-dir then repo root).
+/// the source-tree root.
 pub fn env_candidates(filename: &str) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     out.push(

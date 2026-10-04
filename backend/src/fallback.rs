@@ -1,7 +1,7 @@
 //! Deterministic local fallback backend.
 //!
-//! Mirrors `CowWeightEstimator._estimate_fallback`: hash the image reference
-//! to a stable weight in the range 250–900 kg. Never touches the network.
+//! Hashes the image reference to a stable weight in the range 250-900 kg.
+//! Never touches the network.
 
 use serde_json::{json, Value};
 
@@ -11,7 +11,6 @@ use crate::tape::{weight_range_kg, DISCLAIMER, PHOTO_RANGE_FRACTION};
 
 /// Build the fallback estimate dict for an image reference.
 ///
-/// The digest formula must match `aif/estimator.py`:
 /// `int(sha256(reference).hexdigest()[:8], 16) / 0xFFFFFFFF` → 250 + ratio * 650.
 pub fn estimate_fallback(image_reference: &str, prompt: &str) -> Value {
     let digest = sha256_bytes(image_reference.as_bytes());

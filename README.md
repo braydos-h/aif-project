@@ -10,6 +10,12 @@ an official livestock record.
 
 ## Quick start
 
+Prerequisites: Rust stable (via [rustup](https://rustup.rs/); Windows also
+needs the MSVC Build Tools linker, or use the GNU toolchain), plus a browser.
+`node` is only needed for the `node --check web/app.js` syntax check that CI
+runs. `install.ps1` automates the Windows setup (installs Rust via winget,
+builds the release binary, creates a desktop shortcut).
+
 Build the Rust server, then start the application:
 
 ```powershell
@@ -21,7 +27,11 @@ Open <http://127.0.0.1:8080/>. The server prints the listening URL on stdout.
 
 For a shortcut that starts the server and opens the browser automatically,
 double-click `start_gui.bat` (or run `start_gui.ps1`); they launch the same
-binary and open the WebUI. The supported UI is the Rust-served WebUI.
+binary and open the WebUI. `start.sh` is the Linux/macOS equivalent and
+`install.ps1` is the Windows first-time setup script. All launchers use
+`127.0.0.1:8080` by default; if the port is taken, start the binary manually
+with a different `--port` (e.g. `--port 8081`). The supported UI is the
+Rust-served WebUI.
 
 CLI usage: `aif-backend [--host HOST] [--port PORT]`. Both `--flag value`
 and `--flag=value` forms work; `--help` prints usage and exits 0, while
@@ -88,8 +98,8 @@ and the tests are all Rust (plus plain browser HTML/CSS/JavaScript).
 | `GET` | `/styles.css` | WebUI stylesheet |
 | `GET` | `/app.js` | WebUI JavaScript |
 | `GET` | `/info` | Safe JSON application/configuration information |
-| `GET` | `/health` | Liveness, effective backend/model, uptime, live connections |
-| `GET` | `/metrics` | Operator counters: uptime, totals, live/rejected connections, cache size |
+| `GET` | `/health` | Liveness, effective backend/model, `ollama_configured`, uptime, live connections |
+| `GET` | `/metrics` | Operator counters: version/backend/model, uptime, totals, live/rejected connections, cache size |
 | `GET` | `/demo-cows` | Controlled list of bundled demo images |
 | `GET` | `/demo-cows/{id}` | One approved bundled demo image (`1`, `2`, or `3`) |
 | `POST` | `/estimate-weight` | Single estimate (photo, tape, or both) |
@@ -170,7 +180,7 @@ Measure heart girth just behind the front legs and body length from chest
 to tail head, with the animal standing square.
 
 Optional animal details sharpen the AI guess. `animal_breed` is free text
-(letters, spaces, hyphens, max 64); `animal_sex` is one of `cow`, `bull`,
+(letters, spaces, hyphens, apostrophes, max 64); `animal_sex` is one of `cow`, `bull`,
 `steer`, `heifer`, `calf`, or `unknown`; `animal_age_years` is 0–30. They
 are folded into the model prompt, echoed back as `animal_breed`/
 `animal_sex`/`animal_age_years` (never overwriting the model's own `breed`
@@ -206,7 +216,9 @@ own `{parent}-{index}` request id:
 Status codes are `200` for success, `400` for missing/malformed input,
 invalid images, or invalid runtime options, `404` for unknown routes, `502`
 for an estimator/Ollama failure, and `503` (`server_busy`) when more than 64
-connections arrive at once — retry shortly. Error bodies contain `error`,
+connections arrive at once — retry shortly. Oversize/truncated bodies return
+`400 invalid_json`, and empty/non-array/oversize batch `items` return `400
+invalid_options`. Error bodies contain `error`,
 `code`, and `request_id`; the WebUI maps these to user-friendly messages.
 
 `image_url` downloads are SSRF-guarded: only public `http(s)` hosts are
@@ -224,7 +236,9 @@ Invoke-RestMethod http://127.0.0.1:8080/estimate-weight `
 
 ## Configuration
 
-Copy `.env.example` to `.env` for server defaults. Environment variables that
+Copy `.env.example` to `.env` for server defaults (`Copy-Item .env.example
+.env`). The server probes the current directory first, then the binary's
+directory, then the source root. Environment variables that
 are already set take precedence over `.env`.
 
 | Variable | Default | Purpose |
@@ -233,7 +247,7 @@ are already set take precedence over `.env`.
 | `AIF_AI_MODEL` | `gemma4:31b-cloud` | Ollama model name |
 | `AIF_OLLAMA_URL` | `https://ollama.com/api/generate` | Ollama-compatible generate endpoint |
 | `OLLAMA_API_KEY` | empty | Server-side Ollama bearer token; never returned |
-| `AIF_CACHE_TTL` | `300` | Ollama result cache TTL in seconds; `0` disables |
+| `AIF_CACHE_TTL` | `300` | Ollama result cache TTL in seconds; `0` disables; clamped to 30 days, at most 512 entries |
 
 Ollama Cloud requires an API key. The `none` backend makes a deterministic
 SHA-256-derived estimate in the range 250–900 kg and performs no network
@@ -254,6 +268,26 @@ The integration tests (`backend/tests/server.rs`) spawn the backend binary
 on a free local port over real sockets. Set `AIF_BACKEND_BIN` to override
 the binary path when needed.
 
+## Troubleshooting
+
+- `cargo: command not found` — install Rust via [rustup](https://rustup.rs/)
+  and open a new terminal so `PATH` refreshes.
+- `link.exe not found` (Windows) — install the MSVC Build Tools, or build
+  with the GNU toolchain instead.
+- `Error: backend binary not found` — run `cargo build --release
+  --manifest-path backend/Cargo.toml` first; the launchers never build it.
+- Port 8080 in use — start with `--port 8081` and open that URL instead.
+- `502 estimation_failed` mentioning an API key — set `OLLAMA_API_KEY` (create
+  one at `https://ollama.com/settings/keys`), or use `"backend": "none"` for
+  the offline placeholder.
+- `400 invalid_image` — the file is not a supported image, exceeds 20 MiB, or
+  the URL host is blocked (loopback/private/metadata hosts are refused).
+- `503 server_busy` — more than 64 connections arrived at once; wait a moment
+  and retry (the WebUI retries once automatically).
+- `.env` not picked up — copy `.env.example` to `.env`
+  (`Copy-Item .env.example .env`); the server probes the current directory,
+  then the binary's directory, then the source root.
+
 ## Repository layout
 
 ```text
@@ -261,5 +295,8 @@ backend/src/       Rust HTTP server, config, validation, parsing, Ollama, cache
 backend/tests/     Real-HTTP integration tests + static WebUI guards
 web/               Rust-served WebUI assets
 cows/              Approved bundled demo images
-start_gui.bat/.ps1 Launch the release binary and open the WebUI in a browser
+start_gui.bat/.ps1 Windows launchers (release binary + browser)
+start.sh           Linux/macOS launcher
+install.ps1        Windows first-time setup (Rust install + build + shortcut)
+.github/workflows/ CI (fmt/clippy/test/build + WebUI check) and release build
 ```

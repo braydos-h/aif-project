@@ -81,6 +81,9 @@ cargo build --release --manifest-path backend/Cargo.toml
 ./backend/target/release/aif-backend --host 127.0.0.1 --port 8080
 ```
 
+(On Windows PowerShell the binary is
+`.\backend\target\release\aif-backend.exe`.)
+
 Then visit `http://127.0.0.1:8080/`.
 
 ```bash

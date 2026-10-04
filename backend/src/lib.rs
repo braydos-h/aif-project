@@ -1,7 +1,6 @@
 //! Rust backend for the cow weight estimator.
 //!
-//! Replaces the old Python HTTP server (`aif/server.py`): a threaded
-//! HTTP/1.1 server on `std::net` with an Ollama Cloud client, a
+//! Threaded HTTP/1.1 server on `std::net` with an Ollama Cloud client, a
 //! deterministic fallback backend, image validation, result caching, and
 //! retry-with-backoff — same API contract, no async runtime.
 

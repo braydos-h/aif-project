@@ -1,8 +1,6 @@
 //! In-memory result cache, keyed by SHA-256 of the base64 image.
 //!
-//! Mirrors the per-estimator cache in `aif/estimator.py` (`_cache_get` /
-//! `_cache_put`): entries expire after a TTL; TTL 0 disables caching
-//! entirely.
+//! Entries expire after a TTL; TTL 0 disables caching entirely.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

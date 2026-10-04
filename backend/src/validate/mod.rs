@@ -1,8 +1,5 @@
 //! Image reference handling: URL fetch, base64 decode, magic-byte validation.
 //!
-//! Mirrors `CowWeightEstimator._to_base64_image` / `_validate_image_bytes`
-//! in `aif/estimator.py`.
-//!
 //! Split into focused submodules:
 //! - [`base64`] — strict base64 codec.
 //! - [`image`] — magic-byte validation and size limits.
@@ -30,7 +27,6 @@ impl std::error::Error for ImageValidationError {}
 /// Return raw base64 image bytes from a URL, a data: URI, or a base64 string.
 ///
 /// Validates that the decoded bytes look like a supported image format.
-/// Mirrors `CowWeightEstimator._to_base64_image`.
 pub fn to_base64_image(image_reference: &str) -> Result<String, ImageValidationError> {
     if image_reference.starts_with("http://") || image_reference.starts_with("https://") {
         let image_bytes = fetch::fetch_url(image_reference).map_err(ImageValidationError)?;

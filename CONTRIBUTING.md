@@ -30,6 +30,8 @@ agent rules and [README.md](README.md) for the user/API documentation.
 | Run the browser-opening launcher | `start_gui.bat` (or `start_gui.ps1`) |
 | Rust tests (unit + HTTP integration) | `cargo test --manifest-path backend/Cargo.toml` |
 | Lint (format check) | `cargo fmt --manifest-path backend/Cargo.toml -- --check` |
+| Lint (Clippy, required in CI) | `cargo clippy --manifest-path backend/Cargo.toml --all-targets --all-features -- -D warnings` |
+| WebUI syntax check (required in CI) | `node --check web/app.js` |
 
 Visit `http://127.0.0.1:8080/` after starting the server. `AIF_BACKEND_BIN`
 overrides the binary used by the integration tests.

@@ -2,7 +2,7 @@
 //!
 //! All tunables are read from environment variables, falling back to a
 //! `.env` file in the repository root. Values already in the environment
-//! take precedence over `.env` (same contract as `aif/config.py`).
+//! take precedence over `.env`.
 //!
 //! Split into focused submodules:
 //! - [`env`] — `.env` loading and `env_or` helpers.
@@ -41,7 +41,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Build the config from env vars / `.env`, mirroring `CowWeightEstimator`.
+    /// Build the config from env vars / `.env`.
     pub fn from_env() -> Config {
         let cache_ttl = env_or("AIF_CACHE_TTL", &DEFAULT_CACHE_TTL.to_string())
             .parse::<u64>()

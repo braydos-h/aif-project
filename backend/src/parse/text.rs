@@ -1,7 +1,4 @@
 //! Free-text weight extraction (`<n> kg`, then first bare number).
-//!
-//! Mirrors `CowWeightEstimator._extract_weight_from_text` in
-//! `aif/estimator.py`.
 
 /// Pull a weight in kilograms out of free-form model output.
 ///

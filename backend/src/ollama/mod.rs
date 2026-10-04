@@ -1,8 +1,6 @@
 //! Ollama Cloud backend: POST the image (base64) + prompt, retry once on
 //! transient failures, parse the reply.
 //!
-//! Mirrors `CowWeightEstimator._estimate_via_ollama` /
-//! `_call_ollama_with_retry` in `aif/estimator.py`:
 //! - API key required when the URL host is `ollama.com`, sent as a Bearer token.
 //! - Retries once on 5xx and network/timeout errors, after a 1 s backoff.
 //! - 4xx errors and non-JSON bodies are not retried.
