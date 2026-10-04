@@ -779,3 +779,22 @@
   - `backend/tests/server.rs`: new `index_has_clear_button_and_drop_hint`, `js_uses_batch_endpoint_with_retry_and_file_helpers`, `css_has_clear_and_retry_styles` guards.
   - Docs: `README.md` WebUI bullets (single batch call, chunking, per-item retry + busy retry, drop/paste/clear, 30 s health polling).
 - **Verification:** `cargo test` 117 pass (57 lib + 60 integration), `cargo fmt --check` clean, release build OK, `node --check web/app.js` OK, no `innerHTML`/`localStorage`/`sessionStorage`; live smoke of `POST /estimate-batch` against the release binary shows per-item isolation (502 ollama-no-key + 200 tape in one batch).
+
+## 2026-10-04 22:01:38 +11:00 (session: two-user invite-only hosting roadmap)
+- Added todo/README.md and 18 ordered Markdown tasks for remote domain hosting, invite-only accounts, private history, security, mobile use, operations, and launch.
+- Scope is two invited users with no public signup or billing. Documentation only; no application code or deployment changed.
+- Verified task count, scope, and index links; runtime tests not run for this planning-only change.
+
+## 2026-10-04T22:06:14+11:00 (session: roadmap summary and additions)
+- Read and summarized the complete two-user hosting roadmap.
+- Added an estimate-quality and guidance checklist, linked it as a launch prerequisite, and expanded existing tasks with version tracking, duplicate prevention, CSV safety, interruption handling, accessibility, provider outages, ownership, and service closure.
+- Documentation only; checked roadmap links and change scope. Runtime tests were not needed.
+
+## 2026-10-04 (session: 9/10 hardening audit — security, HTTP, UI, CI, docs)
+- Ran a 10-role independent audit (initial scores 3–6/10 across categories).
+- **Security:** untracked `.env` (`git rm --cached`, local file preserved, pushed; rotation still required, history still contains the old blob); per-request `ollama_url` no longer receives the server API key on foreign hosts (explicit-key override still forwarded); `url_host` lowercased; Ollama client `redirects(0)` + 5 MiB body cap (success and error bodies); model weights validated finite within 20–2500 kg with confidence 0–1 / BCS 1–9 filtering and 128-char breed cap; CSV formula guard (`=+-@tabCR`).
+- **HTTP hardening:** 8 KiB request line, 100-header / 32 KiB caps, duplicate/invalid Content-Length → 400 `bad_request`, chunked → 400, over-limit bodies refused from headers, `take()`-bounded body reads, pre-spawn burst shedding + in-thread cap (503 `server_busy`), hashed ETag, poison-tolerant cache locks, invalid TTL warns, bracketed-IPv6 SSRF parsing fixed.
+- **Tests:** 6 header-parser unit tests, weight/extras/host-case/IPv6 unit tests, 5 HTTP integration tests (chunked/invalid/dup length, oversize-before-read, fake-Ollama key-forwarding), `TestServer` env isolation; MSRV-safe base64 (`% 4`).
+- **WebUI/a11y:** skip link, `aria-describedby`/`aria-invalid`/`aria-errormessage` wiring, Cancel-focus contract, transition-only health announcements, toggleUnits data-loss fix, per-file Remove, 20-item chunk cap, multi-file batch summary, CSV/title/contrast (`--line` 3.5:1 both themes)/forced-colors/32px targets/demo-row wrap.
+- **CI/repo/docs:** enforced clippy, secret + unsafe-HTML guards, pinned toolchain 1.89.0, release-workflow gates, setup-node 24, LICENSE, package metadata, `.gitignore` cleanup, `.gitattributes`, README troubleshooting/prerequisites/accuracy, CONTRIBUTING clippy/node rows, stale `aif/*.py` refs removed.
+- **Verification:** `node --check web/app.js` OK, all static WebUI-guard needles preserved, CSS 166 non-blank lines (≤200 cap), no `innerHTML`/`localStorage`/`sessionStorage`; `cargo` unavailable on this machine so Rust fmt/tests/build/clippy rely on CI (pushed to `main`, CI queued).
