@@ -2,8 +2,11 @@
 name = "aif-backend"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
 description = "Rust HTTP backend for the cow weight estimator"
 license = "MIT"
+repository = "https://github.com/braydos-h/aif-project"
+keywords = ["ollama", "estimator", "http"]
 
 [dependencies]
 ureq = { version = "2", features = ["tls"] }
