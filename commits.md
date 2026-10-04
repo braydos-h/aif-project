@@ -807,3 +807,4 @@
 ## 2026-10-04 (session follow-up: red-team closes)
 - Red-team review found per-request `ollama_url` SSRF-by-design and check-then-spawn race still open: per-request private/local `ollama_url` hosts are now refused (`400 invalid_options`, server default unrestricted; fake-Ollama tests moved to server-default config, `image_url` tests use a public override URL), and connection slots are now claimed atomically in the accept loop (`acquire_slot` + release-only guard, no spawn-before-cap). Header line reads are `take()`-bounded against newline-less floods.
 - **Verification (all local):** fmt/clippy clean, `cargo test` 136 passed (67 lib + 69 integration), release build OK.
+- Follow-up: offline placeholder results carry an unmissable headline prefix and the history chart carries an honest not-a-growth-trend caption.
