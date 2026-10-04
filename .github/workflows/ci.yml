@@ -52,10 +52,20 @@ jobs:
         run: cargo fmt --manifest-path backend/Cargo.toml -- --check
 
       - name: Rust clippy
-        # Clippy is advisory; don't block the whole suite but surface warnings.
-        # Remove `continue-on-error` if you want clippy to be required.
-        run: cargo clippy --manifest-path backend/Cargo.toml -- -D warnings
-        continue-on-error: true
+        run: cargo clippy --manifest-path backend/Cargo.toml --all-targets --all-features -- -D warnings
+
+      - name: Guard against tracked secrets
+        # .env is gitignored but was once tracked; fail loudly if it ever is again.
+        run: test -z "$(git ls-files .env)"
+
+      - name: Guard against unsafe dynamic HTML
+        # Dynamic browser values must use textContent/DOM APIs, never string-built HTML.
+        run: '! grep -rn --include=app.js -E "innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function" web/'
+
+      - name: Set up Node for WebUI syntax check
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
 
       - name: Run Rust tests
         # Includes the real-HTTP integration tests in backend/tests/server.rs
