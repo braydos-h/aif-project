@@ -672,7 +672,12 @@
       ? result._requestId
       : (typeof result.request_id === "string" ? result.request_id : null);
     const metaBits = [model ? `model ${model}` : "", rid ? `request ${rid}` : ""].filter(Boolean);
-    return { title: `${filename}: ${primary}`, detail, meta: metaBits.join(" · ") };
+    // Offline placeholders are hash-derived, not measurements: say so in the
+    // headline, not just buried in the detail string.
+    const title = result.source === "local_fallback"
+      ? `Offline placeholder — ${filename}: ${primary}`
+      : `${filename}: ${primary}`;
+    return { title, detail, meta: metaBits.join(" · ") };
   }
 
   function historyLabel(entry) {
