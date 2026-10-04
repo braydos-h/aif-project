@@ -93,9 +93,10 @@ mod tests {
 
     #[test]
     fn out_of_range_extras_are_ignored() {
-        let (_, extras) =
-            parse_json_block(r#"{"weight_kg": 500, "confidence": 7.5, "body_condition_score": 42}"#)
-                .unwrap();
+        let (_, extras) = parse_json_block(
+            r#"{"weight_kg": 500, "confidence": 7.5, "body_condition_score": 42}"#,
+        )
+        .unwrap();
         assert_eq!(extras.confidence, None);
         assert_eq!(extras.body_condition_score, None);
     }

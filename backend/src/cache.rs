@@ -44,6 +44,14 @@ impl Cache {
             .len()
     }
 
+    /// True when no entries are held.
+    pub fn is_empty(&self) -> bool {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty()
+    }
+
     fn enabled(&self) -> bool {
         !self.ttl.is_zero()
     }

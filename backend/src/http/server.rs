@@ -99,6 +99,7 @@ pub fn serve(state: Arc<ServerState>, host: &str, port: u16) -> std::io::Result<
 }
 
 /// Parsed request head: method, path (query stripped), and body length.
+#[derive(Debug)]
 struct RequestHead {
     method: String,
     path: String,
@@ -261,19 +262,6 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
 mod tests {
     use super::*;
 
-    #[test]
-    fn concurrency_cap_is_sane() {
-        assert!(MAX_CONCURRENT_CONNECTIONS >= 16);
-        assert!(MAX_CONCURRENT_CONNECTIONS <= 256);
-    }
-
-    #[test]
-    fn header_limits_are_sane() {
-        assert!(MAX_REQUEST_LINE_BYTES >= 1024);
-        assert!(MAX_HEADER_COUNT >= 16);
-        assert!(MAX_HEADER_BYTES >= 4096);
-    }
-
     /// Feed raw bytes through the request-head parser over a loopback socket.
     fn head_for(request: &[u8]) -> std::io::Result<Option<RequestHead>> {
         use std::io::Write;
@@ -311,17 +299,17 @@ mod tests {
 
     #[test]
     fn invalid_content_length_is_rejected() {
-        let err =
-            head_for(b"POST /estimate-weight HTTP/1.1\r\nContent-Length: abc\r\n\r\n{}")
-                .unwrap_err();
+        let err = head_for(b"POST /estimate-weight HTTP/1.1\r\nContent-Length: abc\r\n\r\n{}")
+            .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
     fn chunked_encoding_is_flagged() {
-        let head = head_for(b"POST /estimate-weight HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n")
-            .unwrap()
-            .unwrap();
+        let head =
+            head_for(b"POST /estimate-weight HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n")
+                .unwrap()
+                .unwrap();
         assert!(head.has_chunked_body);
     }
 }

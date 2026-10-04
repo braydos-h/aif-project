@@ -163,7 +163,7 @@ pub(crate) fn parse_animal_profile(payload: &Value) -> Result<AnimalProfile, Str
     let age_years = match optional_number(payload, "animal_age_years")? {
         None => None,
         Some(age) => {
-            if !age.is_finite() || age < 0.0 || age > MAX_AGE_YEARS {
+            if !age.is_finite() || !(0.0..=MAX_AGE_YEARS).contains(&age) {
                 return Err("animal_age_years must be between 0 and 30.".to_string());
             }
             Some(age)

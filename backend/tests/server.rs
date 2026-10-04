@@ -206,7 +206,7 @@ fn estimate_batch_returns_per_item_results() {
     );
     let (status, headers, body) = post_json_to(&server, "/estimate-batch", &payload);
     assert_eq!(status, 200);
-    assert!(headers.get("x-request-id").is_some());
+    assert!(headers.contains_key("x-request-id"));
     let parent = body["request_id"].as_str().unwrap().to_string();
     let results = body["results"].as_array().unwrap();
     assert_eq!(results.len(), 2);
@@ -1174,13 +1174,13 @@ fn static_assets_send_cache_headers() {
     assert!(headers
         .get("cache-control")
         .is_some_and(|v| v.contains("immutable")));
-    assert!(headers.get("etag").is_some());
+    assert!(headers.contains_key("etag"));
     let (status, headers, _) = get_raw(&server, "/demo-cows/1");
     assert_eq!(status, 200);
     assert!(headers
         .get("cache-control")
         .is_some_and(|v| v.contains("max-age")));
-    assert!(headers.get("etag").is_some());
+    assert!(headers.contains_key("etag"));
 }
 
 #[test]
