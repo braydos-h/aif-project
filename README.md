@@ -45,7 +45,8 @@ The browser app supports:
 - batch image selection (JPEG, PNG, WebP, BMP, and GIF) with type and size
   checks; large photos are resized in the browser before upload; files can
   also be added by drag-and-drop anywhere on the page or by pasting images,
-  and the selection can be cleared before estimating;
+  and individual files can be removed or the whole selection cleared before
+  estimating;
 - one **Estimate Weight** button that sends the batch in one `POST
   /estimate-batch` call (chunked to stay under the 20 MB body cap),
   showing per-image progress and a final succeeded/failed count, with
