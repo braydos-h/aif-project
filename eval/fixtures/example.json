@@ -1,0 +1,48 @@
+{
+  "name": "synthetic-format-example",
+  "version": "2026-10-05-v1",
+  "acceptance_mape_pct": 15.0,
+  "acceptance_bias_pct": 5.0,
+  "rows": [
+    {
+      "id": "syn-001",
+      "scale_weight_kg": 500.0,
+      "heart_girth_cm": 185.0,
+      "body_length_cm": 152.0,
+      "split": "calibration",
+      "synthetic": true,
+      "breed": "Angus (invented)",
+      "notes": "SYNTHETIC format example only — not a real animal. Do not use for acceptance."
+    },
+    {
+      "id": "syn-002",
+      "scale_weight_kg": 450.0,
+      "heart_girth_cm": 178.0,
+      "body_length_cm": 148.0,
+      "split": "evaluation",
+      "synthetic": true,
+      "breed": "Hereford (invented)",
+      "notes": "SYNTHETIC format example only — not a real animal. Do not use for acceptance."
+    },
+    {
+      "id": "syn-003",
+      "scale_weight_kg": 620.0,
+      "heart_girth_cm": 196.0,
+      "body_length_cm": 160.0,
+      "split": "evaluation",
+      "synthetic": true,
+      "breed": "Holstein (invented)",
+      "notes": "SYNTHETIC format example only — not a real animal. Do not use for acceptance."
+    },
+    {
+      "id": "syn-004",
+      "scale_weight_kg": 380.0,
+      "heart_girth_cm": 168.0,
+      "body_length_cm": 140.0,
+      "split": "evaluation",
+      "synthetic": true,
+      "breed": "Jersey (invented)",
+      "notes": "SYNTHETIC format example only — not a real animal. Do not use for acceptance."
+    }
+  ]
+}

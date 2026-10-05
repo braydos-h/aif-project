@@ -10,6 +10,7 @@ pub mod cache;
 pub mod cli;
 pub mod config;
 pub mod db;
+pub mod eval;
 pub mod fallback;
 pub mod hash;
 pub mod http;
