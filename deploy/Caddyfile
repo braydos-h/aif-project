@@ -1,0 +1,51 @@
+# Caddy reverse proxy for the Cow Weight Estimator.
+# Replace cows.example.com with the real domain. Caddy obtains and renews
+# certificates automatically and redirects http:// to https://.
+{
+	# Alert before certificates expire (Caddy renews automatically).
+	email operator@example.com
+}
+
+cows.example.com {
+	# Only the proxy is public; the Rust backend binds 127.0.0.1:8080.
+	reverse_proxy 127.0.0.1:8080 {
+		# Match the backend's 20 MiB body cap and 30 s socket timeouts.
+		transport http {
+			response_header_timeout 90s
+		}
+		# Forward the real client IP; the backend only trusts this header
+		# from AIF_TRUSTED_PROXIES (set to 127.0.0.1 in /etc/aif/aif.env).
+		header_up X-Forwarded-For {http.request.header.X-Forwarded-For}
+		header_up X-Forwarded-Proto {http.request.scheme}
+	}
+
+	# Proxy upload cap mirrors the backend MAX_BODY_BYTES (20 MiB).
+	request_body {
+		max_size 20MB
+	}
+
+	# Timeouts aligned with the backend (90 s estimator, 30 s sockets).
+	timeouts {
+		read_body 90s
+		read_header 30s
+		write 90s
+		idle 120s
+	}
+
+	# Defense in depth; the backend also sends these.
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		# Enable HSTS only after you have validated HTTPS end to end.
+		# Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		-Server
+	}
+
+	# Operator/database administration stays off the public network:
+	# no extra routes are exposed here beyond the app itself.
+	log {
+		output file /var/log/caddy/aif-access.log
+		format json
+	}
+}

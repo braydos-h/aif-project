@@ -1,0 +1,13 @@
+/var/log/caddy/aif-access.log {
+  daily
+  rotate 30
+  compress
+  delaycompress
+  missingok
+  notifempty
+  create 0640 root adm
+  sharedscripts
+  postrotate
+    systemctl reload caddy >/dev/null 2>&1 || true
+  endscript
+}

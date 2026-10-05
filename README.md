@@ -74,6 +74,13 @@ model, and prompt come from the server defaults. The browser stores nothing —
 no `localStorage`, no API keys, no base64 images in history. Dynamic text is
 rendered as text, not HTML.
 
+When the server requires authentication (`AIF_REQUIRE_AUTH=1`, always in
+production), estimates are saved to your private server-side history with
+source/model/version stamps; anonymous estimates are never saved. Accounts
+require an operator invitation — there is no public registration. See
+`docs/privacy.md` for data handling and `docs/recovery.md` for the
+operator-relayed invite/recovery flow.
+
 ## Architecture
 
 ```text
@@ -99,6 +106,38 @@ and the tests are all Rust (plus plain browser HTML/CSS/JavaScript).
 | `GET` | `/` | WebUI HTML |
 | `GET` | `/styles.css` | WebUI stylesheet |
 | `GET` | `/app.js` | WebUI JavaScript |
+| `GET` | `/account.js` | Account/history/animals/operator JavaScript |
+| `GET` | `/account.css` | Account stylesheet |
+| `GET` | `/api/me` | Session probe (`authenticated`, `auth_required`, CSRF token) |
+| `POST` | `/api/auth/login` | Password login (rate-limited, generic failures) |
+| `POST` | `/api/auth/logout` | Revoke the current session |
+| `POST` | `/api/auth/accept-invite` | Redeem a single-use invite (`token`, `password`, `display_name`) |
+| `POST` | `/api/auth/recovery/request` | Generic-success recovery request (operator relays the link) |
+| `POST` | `/api/auth/recovery/complete` | Redeem a recovery token for a new password |
+| `POST` | `/api/auth/change-password` | Reauthenticated password change (logs out everywhere) |
+| `POST` | `/api/auth/profile` | Update display name |
+| `GET` | `/api/history` | Paginated history (`page`, `per_page`, `animal_id`, `source`, `from`, `to`) |
+| `GET` | `/api/history/{id}` | One owned estimate (others' ids 404) |
+| `DELETE` | `/api/history/{id}` | Delete one owned estimate |
+| `GET` | `/api/history/export?format=csv` | Spreadsheet-safe CSV download (numeric columns numeric) |
+| `GET` | `/api/animals` | List owned animals (`include_archived=1`) |
+| `POST` | `/api/animals` | Create an animal (`name`, `breed`, `sex`, `birth_year`, `notes`) |
+| `GET` | `/api/animals/{id}` | Animal detail with its estimate trend |
+| `PUT` | `/api/animals/{id}` | Edit/archive an owned animal |
+| `DELETE` | `/api/animals/{id}` | Delete an animal (estimates kept, unlinked) |
+| `POST` | `/api/animals/{id}/measurements` | Record a verified scale weight (`scale_weight_kg`, `measured_at`) |
+| `GET` | `/api/account` | Profile summary, usage, photo policy |
+| `GET` | `/api/account/export` | Full owned-data JSON export |
+| `DELETE` | `/api/account` | Password-confirmed self-deletion (revokes all sessions) |
+| `POST` | `/api/operator/invites` | Mint an invite (operator; one-time link in response) |
+| `GET` | `/api/operator/invites` | Invite list with status |
+| `POST` | `/api/operator/invites/{id}/revoke` | Revoke an unused invite |
+| `GET` | `/api/operator/users` | Account list (operator) |
+| `DELETE` | `/api/operator/users/{id}` | Remove an account (operator) |
+| `GET` | `/api/operator/usage` | Per-day inference usage and limits |
+| `GET` | `/api/operator/status` | Backend/model/pause/user counters (no secrets) |
+| `POST` | `/api/operator/pause` | Flip the inference pause switch (`{"paused": bool}`) |
+| `GET` | `/api/operator/audit` | Recent redacted audit entries |
 | `GET` | `/info` | Safe JSON application/configuration information |
 | `GET` | `/health` | Liveness, effective backend/model, `ollama_configured`, uptime, live connections |
 | `GET` | `/metrics` | Operator counters: version/backend/model, uptime, totals, live/rejected connections, cache size |
@@ -109,7 +148,16 @@ and the tests are all Rust (plus plain browser HTML/CSS/JavaScript).
 
 `/info` includes `backend`, `model`, `ollama_url`, `default_prompt`, version,
 endpoints, and an `ollama_configured` boolean. It never returns
-`OLLAMA_API_KEY`.
+`OLLAMA_API_KEY`. In production the response is reduced (no
+backend/model/URL/prompt), `/health` reports liveness only, and `/metrics`
+is operator-only.
+
+Authenticated estimates accept three extra fields alongside the photo/tape
+inputs: `animal_id` (must be an owned animal, else 404), `measured_at`
+(RFC 3339 UTC measurement time, default now), and `idempotency_key`
+(1–128 chars; replays return the stored result with `replayed: true` and
+`X-Idempotent-Replayed: true` instead of spending inference again).
+Successful saves add `history_id` and `saved: true` to the response.
 
 ### `POST /estimate-weight`
 
@@ -217,9 +265,13 @@ own `{parent}-{index}` request id:
 ```
 
 Status codes are `200` for success, `400` for missing/malformed input,
-invalid images, or invalid runtime options, `404` for unknown routes, `502`
-for an estimator/Ollama failure, and `503` (`server_busy`) when more than 64
-connections arrive at once — retry shortly. Oversize/truncated bodies return
+invalid images, or invalid runtime options, `401` for missing login (when
+auth is required), `403` for forbidden operator routes or bad CSRF,
+`404` for unknown routes, `429` for rate-limited logins or exhausted daily
+quotas, `502` for an estimator/Ollama failure, and `503` (`server_busy`)
+when more than 64 connections arrive at once — retry shortly — or
+`inference_paused` when the operator has paused AI estimates (tape still
+works). Oversize/truncated bodies return
 `400 invalid_json`, and empty/non-array/oversize batch `items` return `400
 invalid_options`. Error bodies contain `error`,
 `code`, and `request_id`; the WebUI maps these to user-friendly messages.
@@ -255,10 +307,42 @@ are already set take precedence over `.env`.
 | `AIF_OLLAMA_URL` | `https://ollama.com/api/generate` | Ollama-compatible generate endpoint |
 | `OLLAMA_API_KEY` | empty | Server-side Ollama bearer token; never returned |
 | `AIF_CACHE_TTL` | `300` | Ollama result cache TTL in seconds; `0` disables; clamped to 30 days, at most 512 entries |
+| `AIF_REQUIRE_AUTH` | `0` | `1` requires login for estimation/history/account/operator/metrics |
+| `AIF_PRODUCTION` | `0` | `1` enables the production profile (implies auth, secure cookies, HSTS, same-origin CORS, private metrics, reduced info/health, no provider overrides) |
+| `AIF_DATA_DIR` | `data` | SQLite directory (`aif.db`), created on startup |
+| `AIF_PUBLIC_ORIGIN` | `http://127.0.0.1:8080` | HTTPS origin for invite/recovery links (never the Host header) |
+| `AIF_OPERATOR_EMAIL` | empty | First-run bootstrap operator invite when the DB is empty |
+| `AIF_COOKIE_SECURE` | production | `Secure` cookie flag |
+| `AIF_SESSION_DAYS` | `30` | Session lifetime (1–365 days) |
+| `AIF_INVITE_DAYS` | `7` | Invite lifetime (1–30 days) |
+| `AIF_DAILY_LIMIT` | `200` | Photo estimates per user per UTC day (tape free) |
+| `AIF_MAX_INFERENCE` | `4` | Concurrent provider inferences (1–64) |
+| `AIF_INFERENCE_PAUSED` | `0` | Start with provider inference paused |
+| `AIF_TRUSTED_PROXIES` | `127.0.0.1,::1` | Peers allowed to supply `X-Forwarded-For` |
 
 Ollama Cloud requires an API key. The `none` backend makes a deterministic
 SHA-256-derived estimate in the range 250–900 kg and performs no network
 request, making it suitable for local demos and tests.
+
+Operator administration (invites, users, recovery) runs against the same
+database and exits — point `AIF_DATA_DIR` at the service data dir:
+
+```sh
+aif-backend --create-invite user@example.com [--role user|operator]
+aif-backend --list-users | --list-invites
+aif-backend --revoke-invite <id> | --delete-user <email> | --create-recovery <email>
+```
+
+Estimate quality is gated by a repeatable evaluation (`eval/README.md`):
+
+```sh
+cargo run --manifest-path backend/Cargo.toml --bin aif-eval -- \
+  --dataset eval/fixtures/example.json --out /tmp/opencode/eval-report.json
+```
+
+Production deployment, operations, security, privacy, and recovery flows
+live in `docs/` (`deployment.md`, `operations.md`, `security.md`,
+`privacy.md`, `recovery.md`); service units and proxy config in `deploy/`.
 
 ## Development and tests
 
@@ -299,9 +383,13 @@ the binary path when needed.
 
 ```text
 backend/src/       Rust HTTP server, config, validation, parsing, Ollama, cache
+backend/src/bin/   aif-eval reference-dataset evaluation binary
 backend/tests/     Real-HTTP integration tests + static WebUI guards
-web/               Rust-served WebUI assets
+web/               Rust-served WebUI assets (estimator + account UI)
 cows/              Approved bundled demo images
+deploy/            systemd unit, Caddyfile, install/update/rollback/backup/restore
+docs/              deployment, operations, security, privacy, recovery guides
+eval/              estimate-quality framework, fixtures, evaluation README
 start_gui.bat/.ps1 Windows launchers (release binary + browser)
 start.sh           Linux/macOS launcher
 install.ps1        Windows first-time setup (Rust install + build + shortcut)
