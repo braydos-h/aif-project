@@ -195,7 +195,10 @@ impl Db {
         Db::open(dir.to_str().unwrap_or("/tmp/aif-db-test"))
     }
 
-    fn with_conn<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
+    fn with_conn<T>(
+        &self,
+        f: impl FnOnce(&mut Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
         let mut guard = self
             .conn
             .lock()
@@ -206,9 +209,11 @@ impl Db {
     /// Current schema version recorded in the database.
     pub fn schema_version(&self) -> Result<u32, String> {
         self.with_conn(|conn| {
-            conn.query_row("SELECT COALESCE(MAX(version), 0) FROM schema_migrations", [], |r| {
-                r.get(0)
-            })
+            conn.query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )
             .map_err(|e| e.to_string())
         })
     }
@@ -742,7 +747,11 @@ impl Db {
     }
 
     /// Look up a live recovery token by hash.
-    pub fn live_recovery(&self, token_hash: &str, now: &str) -> Result<Option<RecoveryToken>, String> {
+    pub fn live_recovery(
+        &self,
+        token_hash: &str,
+        now: &str,
+    ) -> Result<Option<RecoveryToken>, String> {
         self.with_conn(|conn| {
             conn.query_row(
                 "SELECT id, user_id, expires_at, used_at FROM recovery_tokens WHERE token_hash = ? AND used_at IS NULL",
@@ -763,7 +772,12 @@ impl Db {
     }
 
     /// Consume a recovery token and set the new password hash atomically.
-    pub fn consume_recovery(&self, token_id: &str, user_id: &str, new_hash: &str) -> Result<(), String> {
+    pub fn consume_recovery(
+        &self,
+        token_id: &str,
+        user_id: &str,
+        new_hash: &str,
+    ) -> Result<(), String> {
         self.with_conn(|conn| {
             let tx = conn.transaction().map_err(|e| e.to_string())?;
             let now = rfc3339(unix_now());
@@ -817,6 +831,7 @@ pub struct Animal {
 
 impl Db {
     /// Create an animal for a user.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_animal(
         &self,
         id: &str,
@@ -850,7 +865,11 @@ impl Db {
     }
 
     /// List a user's animals (optionally including archived).
-    pub fn list_animals(&self, user_id: &str, include_archived: bool) -> Result<Vec<Animal>, String> {
+    pub fn list_animals(
+        &self,
+        user_id: &str,
+        include_archived: bool,
+    ) -> Result<Vec<Animal>, String> {
         self.with_conn(|conn| {
             let sql = if include_archived {
                 "SELECT id, user_id, name, breed, sex, birth_year, notes, archived, created_at, updated_at FROM animals WHERE user_id = ? ORDER BY created_at"
@@ -905,6 +924,7 @@ impl Db {
     }
 
     /// Update an animal's editable fields (ownership checked by caller).
+    #[allow(clippy::too_many_arguments)]
     pub fn update_animal(
         &self,
         id: &str,
@@ -931,8 +951,11 @@ impl Db {
     pub fn delete_animal(&self, id: &str) -> Result<(), String> {
         self.with_conn(|conn| {
             let tx = conn.transaction().map_err(|e| e.to_string())?;
-            tx.execute("UPDATE estimates SET animal_id = NULL WHERE animal_id = ?", params![id])
-                .map_err(|e| e.to_string())?;
+            tx.execute(
+                "UPDATE estimates SET animal_id = NULL WHERE animal_id = ?",
+                params![id],
+            )
+            .map_err(|e| e.to_string())?;
             tx.execute("DELETE FROM animals WHERE id = ?", params![id])
                 .map_err(|e| e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;
@@ -1215,16 +1238,21 @@ mod tests {
     #[test]
     fn two_user_cap_is_enforced() {
         let db = test_db("cap");
-        db.create_user("u1", "a@example.com", "A", "h", "operator").unwrap();
-        db.create_user("u2", "b@example.com", "B", "h", "user").unwrap();
-        let err = db.create_user("u3", "c@example.com", "C", "h", "user").unwrap_err();
+        db.create_user("u1", "a@example.com", "A", "h", "operator")
+            .unwrap();
+        db.create_user("u2", "b@example.com", "B", "h", "user")
+            .unwrap();
+        let err = db
+            .create_user("u3", "c@example.com", "C", "h", "user")
+            .unwrap_err();
         assert!(err.contains("user_limit"));
     }
 
     #[test]
     fn failed_batch_insert_leaves_no_partial_rows() {
         let db = test_db("atomic");
-        db.create_user("u1", "a@example.com", "A", "h", "user").unwrap();
+        db.create_user("u1", "a@example.com", "A", "h", "user")
+            .unwrap();
         // Duplicate primary key in a two-row transaction must roll back both.
         let result = db.with_conn(|conn| {
             let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -1242,9 +1270,12 @@ mod tests {
     #[test]
     fn account_deletion_revokes_sessions_and_data() {
         let db = test_db("delcascade");
-        db.create_user("u1", "a@example.com", "A", "h", "user").unwrap();
-        db.create_session("sess", "u1", "csrf", "2999-01-01T00:00:00Z").unwrap();
-        db.create_animal("a1", "u1", "Bessie", None, None, None, None).unwrap();
+        db.create_user("u1", "a@example.com", "A", "h", "user")
+            .unwrap();
+        db.create_session("sess", "u1", "csrf", "2999-01-01T00:00:00Z")
+            .unwrap();
+        db.create_animal("a1", "u1", "Bessie", None, None, None, None)
+            .unwrap();
         let (users, sessions) = db.delete_account("u1").unwrap();
         assert_eq!((users, sessions), (1, 1));
         assert!(db

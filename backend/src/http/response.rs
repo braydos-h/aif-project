@@ -20,12 +20,35 @@ pub(crate) const CODE_INVALID_OPTIONS: &str = "invalid_options";
 pub(crate) const CODE_NOT_FOUND: &str = "not_found";
 pub(crate) const CODE_ESTIMATION_FAILED: &str = "estimation_failed";
 pub(crate) const CODE_SERVER_BUSY: &str = "server_busy";
+pub(crate) const CODE_UNAUTHORIZED: &str = "unauthorized";
+pub(crate) const CODE_FORBIDDEN: &str = "forbidden";
+pub(crate) const CODE_RATE_LIMITED: &str = "rate_limited";
+pub(crate) const CODE_CSRF: &str = "csrf_invalid";
+pub(crate) const CODE_QUOTA: &str = "quota_exceeded";
+pub(crate) const CODE_USER_LIMIT: &str = "user_limit";
+pub(crate) const CODE_INVALID_CREDENTIALS: &str = "invalid_credentials";
+pub(crate) const CODE_INVITE_INVALID: &str = "invite_invalid";
+pub(crate) const CODE_INVITE_EXPIRED: &str = "invite_expired";
+pub(crate) const CODE_INVITE_USED: &str = "invite_used";
+pub(crate) const CODE_INVITE_REVOKED: &str = "invite_revoked";
+pub(crate) const CODE_PAUSED: &str = "inference_paused";
 
 /// A finished HTTP response.
 pub(crate) struct Response {
     pub(crate) status: u16,
     pub(crate) content_type: &'static str,
     pub(crate) body: Vec<u8>,
+    /// Extra headers (e.g. `Set-Cookie`). Names/values are sanitized at
+    /// write time so token material cannot split headers.
+    pub(crate) extra_headers: Vec<(String, String)>,
+    /// Value for `Access-Control-Allow-Origin`, or `None` to omit it
+    /// (production same-origin policy). Open local mode keeps `*` for
+    /// existing API clients.
+    pub(crate) cors_origin: Option<String>,
+    /// Emit `Strict-Transport-Security` (production HTTPS only).
+    pub(crate) hsts: bool,
+    /// Filename for `Content-Disposition: attachment` downloads.
+    pub(crate) attachment: Option<String>,
 }
 
 impl Response {
@@ -38,6 +61,10 @@ impl Response {
             status,
             content_type: "application/json; charset=utf-8",
             body,
+            extra_headers: Vec::new(),
+            cors_origin: Some("*".to_string()),
+            hsts: false,
+            attachment: None,
         }
     }
 
@@ -46,7 +73,40 @@ impl Response {
             status,
             content_type,
             body: body.to_vec(),
+            extra_headers: Vec::new(),
+            cors_origin: Some("*".to_string()),
+            hsts: false,
+            attachment: None,
         }
+    }
+
+    pub(crate) fn csv(status: u16, body: Vec<u8>, filename: &str) -> Response {
+        Response {
+            status,
+            content_type: "text/csv; charset=utf-8",
+            body,
+            extra_headers: Vec::new(),
+            cors_origin: None,
+            hsts: false,
+            attachment: Some(filename.to_string()),
+        }
+    }
+
+    /// Add an extra header. CR/LF are stripped so values carrying tokens
+    /// or user text cannot split the response head.
+    pub(crate) fn with_header(mut self, name: &str, value: &str) -> Response {
+        let clean: String = value.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+        self.extra_headers.push((name.to_string(), clean));
+        self
+    }
+
+    /// Apply the deployment CORS + HSTS policy from server config.
+    pub(crate) fn with_policy(mut self, production: bool) -> Response {
+        if production {
+            self.cors_origin = None;
+            self.hsts = true;
+        }
+        self
     }
 }
 
@@ -55,6 +115,8 @@ pub(crate) fn status_text(status: u16) -> &'static str {
         200 => "OK",
         204 => "No Content",
         400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         429 => "Too Many Requests",
         502 => "Bad Gateway",
@@ -116,26 +178,46 @@ pub(crate) fn write_response(
     } else {
         String::new()
     };
-    let head = format!(
+    let mut head = format!(
         "HTTP/1.1 {} {}\r\n\
          Content-Type: {}\r\n\
          Content-Length: {}\r\n\
          x-request-id: {}\r\n\
-         Access-Control-Allow-Origin: *\r\n\
+         {}\
          Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n\
-         Access-Control-Allow-Headers: Content-Type\r\n\
+         Access-Control-Allow-Headers: Content-Type, X-CSRF-Token\r\n\
          X-Content-Type-Options: nosniff\r\n\
+         X-Frame-Options: DENY\r\n\
          Referrer-Policy: no-referrer\r\n\
          Content-Security-Policy: default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'\r\n\
-         {}Connection: close\r\n\
-         \r\n",
+         {}{}{}",
         response.status,
         status_text(response.status),
         response.content_type,
         response.body.len(),
         request_id,
+        response.cors_origin.as_ref().map(|origin| {
+            // The origin is server-configured, never request-derived.
+            let clean: String = origin.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+            format!("Access-Control-Allow-Origin: {}\r\n", clean)
+        }).unwrap_or_default(),
         cache_headers,
+        if response.hsts { "Strict-Transport-Security: max-age=63072000; includeSubDomains\r\n" } else { "" },
+        response.attachment.as_ref().map(|name| {
+            let clean: String = name.chars().filter(|c| *c != '\r' && *c != '\n' && *c != '"').collect();
+            format!("Content-Disposition: attachment; filename=\"{}\"\r\n", clean)
+        }).unwrap_or_default(),
     );
+    for (name, value) in &response.extra_headers {
+        // Names are server constants; values were sanitized at build time.
+        // Re-check here so a future caller cannot split headers.
+        if name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && !value.contains(['\r', '\n'])
+        {
+            head.push_str(&format!("{}: {}\r\n", name, value));
+        }
+    }
+    head.push_str("Connection: close\r\n\r\n");
     stream.write_all(head.as_bytes())?;
     stream.write_all(&response.body)?;
     stream.flush()

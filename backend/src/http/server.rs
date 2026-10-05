@@ -105,13 +105,37 @@ pub fn serve(state: Arc<ServerState>, host: &str, port: u16) -> std::io::Result<
     Ok(())
 }
 
-/// Parsed request head: method, path (query stripped), and body length.
+/// Parsed request head: method, path (query stripped), body length, and the
+/// headers the router needs (cookie, CSRF, forwarding). Header count/bytes
+/// are already capped above; only small allow-listed headers are retained.
 #[derive(Debug)]
-struct RequestHead {
-    method: String,
-    path: String,
-    content_length: usize,
-    has_chunked_body: bool,
+pub(crate) struct RequestHead {
+    pub(crate) method: String,
+    pub(crate) path: String,
+    /// Raw query string (no `?`), for filterable API routes. Routing
+    /// matches on [`RequestHead::path`] only.
+    pub(crate) query: Option<String>,
+    pub(crate) content_length: usize,
+    pub(crate) has_chunked_body: bool,
+    pub(crate) cookie: Option<String>,
+    pub(crate) csrf_token: Option<String>,
+    pub(crate) forwarded_for: Option<String>,
+    pub(crate) idempotency_key: Option<String>,
+}
+
+/// Small header value kept for routing (already within the global caps).
+fn keep_header(headers: &mut RequestHead, name: &str, value: &str) {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 4096 {
+        return;
+    }
+    match name {
+        "cookie" => headers.cookie = Some(value.to_string()),
+        "x-csrf-token" => headers.csrf_token = Some(value.to_string()),
+        "x-forwarded-for" => headers.forwarded_for = Some(value.to_string()),
+        "idempotency-key" => headers.idempotency_key = Some(value.to_string()),
+        _ => {}
+    }
 }
 
 /// Client-error constructor: `ErrorKind::InvalidData` marks failures the
@@ -137,18 +161,27 @@ fn read_request_head(reader: &mut BufReader<TcpStream>) -> std::io::Result<Optio
     }
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
-    let path = parts
-        .next()
-        .unwrap_or("")
-        .split('?')
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let raw_target = parts.next().unwrap_or("");
+    let (path, query) = match raw_target.split_once('?') {
+        Some((p, q)) => (p.to_string(), (!q.is_empty()).then(|| q.to_string())),
+        None => (raw_target.to_string(), None),
+    };
 
     let mut content_length: Option<usize> = None;
     let mut has_chunked_body = false;
     let mut header_count = 0usize;
     let mut header_bytes = 0usize;
+    let mut head = RequestHead {
+        method,
+        path,
+        query,
+        content_length: 0,
+        has_chunked_body: false,
+        cookie: None,
+        csrf_token: None,
+        forwarded_for: None,
+        idempotency_key: None,
+    };
     loop {
         let mut line = String::new();
         if reader
@@ -169,7 +202,8 @@ fn read_request_head(reader: &mut BufReader<TcpStream>) -> std::io::Result<Optio
             return Err(invalid_data("Request headers too large"));
         }
         if let Some((name, value)) = line.split_once(':') {
-            if name.eq_ignore_ascii_case("Content-Length") {
+            let lower = name.trim().to_ascii_lowercase();
+            if lower == "content-length" {
                 if content_length.is_some() {
                     return Err(invalid_data("Duplicate Content-Length"));
                 }
@@ -179,19 +213,17 @@ fn read_request_head(reader: &mut BufReader<TcpStream>) -> std::io::Result<Optio
                         .parse()
                         .map_err(|_| invalid_data("Invalid Content-Length"))?,
                 );
-            } else if name.eq_ignore_ascii_case("Transfer-Encoding")
-                && value.to_ascii_lowercase().contains("chunked")
+            } else if lower == "transfer-encoding" && value.to_ascii_lowercase().contains("chunked")
             {
                 has_chunked_body = true;
+            } else {
+                keep_header(&mut head, &lower, value);
             }
         }
     }
-    Ok(Some(RequestHead {
-        method,
-        path,
-        content_length: content_length.unwrap_or(0),
-        has_chunked_body,
-    }))
+    head.content_length = content_length.unwrap_or(0);
+    head.has_chunked_body = has_chunked_body;
+    Ok(Some(head))
 }
 
 /// Read the request line + headers + body from the connection and produce a
@@ -203,6 +235,12 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
     // The accept loop already claimed this connection's slot; the guard
     // below only releases it (every early return still frees the count).
     let _guard = ActiveGuard::adopted(&state.metrics);
+    // Peer IP for rate limiting. `X-Forwarded-For` is only honored when the
+    // peer is an explicitly configured trusted proxy (mod.rs checks this).
+    let peer_ip = stream
+        .peer_addr()
+        .map(|a| a.ip().to_string())
+        .unwrap_or_default();
     let mut reader = BufReader::new(stream.try_clone()?);
 
     let head = match read_request_head(&mut reader) {
@@ -263,7 +301,15 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
         }
     }
 
-    let response = dispatch(&head.method, &head.path, &body, &request_id, state);
+    let response = dispatch(
+        &head.method,
+        &head.path,
+        &body,
+        &request_id,
+        state,
+        &head,
+        &peer_ip,
+    );
     write_response(&mut stream, &request_id, &response)
 }
 

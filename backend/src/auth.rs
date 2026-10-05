@@ -5,7 +5,9 @@
 //! tokens are stored; raw tokens live only in the operator's delivery
 //! channel and the user's cookie.
 
-use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{
+    rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+};
 use argon2::Argon2;
 use rand::RngCore;
 
@@ -90,7 +92,10 @@ pub fn valid_email(email: &str) -> bool {
     let mut parts = email.split('@');
     match (parts.next(), parts.next(), parts.next()) {
         (Some(local), Some(domain), None) => {
-            !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
+            !local.is_empty()
+                && domain.contains('.')
+                && !domain.starts_with('.')
+                && !domain.ends_with('.')
         }
         _ => false,
     }
@@ -99,9 +104,7 @@ pub fn valid_email(email: &str) -> bool {
 /// Validate a display name (short free text, no control characters).
 pub fn valid_display_name(name: &str) -> bool {
     let trimmed = name.trim();
-    !trimmed.is_empty()
-        && trimmed.len() <= 64
-        && !trimmed.bytes().any(|b| b.is_ascii_control())
+    !trimmed.is_empty() && trimmed.len() <= 64 && !trimmed.bytes().any(|b| b.is_ascii_control())
 }
 
 /// Build the `Set-Cookie` header value for a session token.
@@ -118,7 +121,10 @@ pub fn session_cookie_value(token: &str, max_age_secs: u64, secure: bool) -> Str
 
 /// Expired-cookie value used on logout.
 pub fn clear_cookie_value(secure: bool) -> String {
-    let mut cookie = format!("{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0", SESSION_COOKIE);
+    let mut cookie = format!(
+        "{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        SESSION_COOKIE
+    );
     if secure {
         cookie.push_str("; Secure");
     }
@@ -149,7 +155,10 @@ mod tests {
         assert!(hash.starts_with("$argon2"));
         assert!(verify_password("correct horse battery staple", &hash));
         assert!(!verify_password("wrong password here!!", &hash));
-        assert!(!verify_password("correct horse battery staple", "not-a-hash"));
+        assert!(!verify_password(
+            "correct horse battery staple",
+            "not-a-hash"
+        ));
         assert!(!hash.contains("correct horse"));
     }
 
@@ -184,6 +193,10 @@ mod tests {
         );
         assert!(session_token_from_cookie("theme=dark").is_none());
         let secure = session_cookie_value("t", 60, true);
-        assert!(secure.contains("HttpOnly") && secure.contains("Secure") && secure.contains("SameSite=Lax"));
+        assert!(
+            secure.contains("HttpOnly")
+                && secure.contains("Secure")
+                && secure.contains("SameSite=Lax")
+        );
     }
 }

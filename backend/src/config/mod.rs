@@ -103,9 +103,7 @@ pub fn validate_production_config(config: &Config) -> Result<(), String> {
         && !config.public_origin.contains('@')
         && !config.public_origin.contains('?'))
     {
-        return Err(
-            "AIF_PRODUCTION=1 requires AIF_PUBLIC_ORIGIN=https://<domain>".to_string(),
-        );
+        return Err("AIF_PRODUCTION=1 requires AIF_PUBLIC_ORIGIN=https://<domain>".to_string());
     }
     if config.backend == "ollama" && config.ollama_api_key.is_none() {
         return Err("AIF_PRODUCTION=1 with backend=ollama requires OLLAMA_API_KEY".to_string());

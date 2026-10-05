@@ -39,7 +39,10 @@ impl AttemptLimiter {
         entry.push(now);
         // Bound memory: drop keys that went quiet.
         if hits.len() > 4096 {
-            hits.retain(|_, v| v.last().is_some_and(|t| now.duration_since(*t).as_secs() < self.window_secs));
+            hits.retain(|_, v| {
+                v.last()
+                    .is_some_and(|t| now.duration_since(*t).as_secs() < self.window_secs)
+            });
         }
         true
     }
