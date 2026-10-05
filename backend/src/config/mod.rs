@@ -72,6 +72,21 @@ pub struct Config {
     pub trusted_proxies: Vec<String>,
     /// Bootstrap operator email for first-run invite creation.
     pub operator_email: Option<String>,
+    /// Optional private photo retention (`AIF_RETAIN_PHOTOS=1`). Default off:
+    /// uploads are transient and never stored.
+    pub retain_photos: bool,
+    /// Retained photo lifetime in days (expiry sweep deletes them).
+    pub photo_ttl_days: u64,
+    /// Per-user retained-photo quota in MiB.
+    pub photo_quota_mb: u64,
+    /// Durable estimate jobs (background worker). On by default.
+    pub jobs_enabled: bool,
+    /// Completed-job retention in hours before pruning.
+    pub job_ttl_hours: u64,
+    /// Run the background job worker in this process.
+    pub job_worker: bool,
+    /// Disk-usage alert threshold for the data dir, in MiB.
+    pub disk_alert_mb: u64,
 }
 
 fn env_bool(key: &str, default: bool) -> bool {
@@ -166,6 +181,13 @@ impl Config {
             operator_email: std::env::var("AIF_OPERATOR_EMAIL")
                 .ok()
                 .filter(|v| !v.is_empty()),
+            retain_photos: env_bool("AIF_RETAIN_PHOTOS", false),
+            photo_ttl_days: env_u64("AIF_PHOTO_TTL_DAYS", 30).clamp(1, 365),
+            photo_quota_mb: env_u64("AIF_PHOTO_QUOTA_MB", 50).clamp(1, 1024),
+            jobs_enabled: env_bool("AIF_JOBS_ENABLED", true),
+            job_ttl_hours: env_u64("AIF_JOB_TTL_HOURS", 72).clamp(1, 720),
+            job_worker: env_bool("AIF_JOB_WORKER", true),
+            disk_alert_mb: env_u64("AIF_DISK_ALERT_MB", 1024).clamp(64, 1_000_000),
         }
     }
 }

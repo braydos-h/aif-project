@@ -46,5 +46,25 @@ fn main() -> std::io::Result<()> {
         ServerState::new(config)
             .map_err(|e| std::io::Error::other(format!("cannot start server: {}", e)))?,
     );
+    // Boot recovery: requeue interrupted jobs (worker does this too, but
+    // run it even when the worker is disabled so state never sticks), then
+    // sweep expired/orphan retained photos.
+    {
+        let now = aif_backend::time_util::rfc3339(aif_backend::time_util::unix_now());
+        match state.db.requeue_active_jobs(&now) {
+            Ok(n) if n > 0 => eprintln!("requeued {} interrupted job(s)", n),
+            Ok(_) => {}
+            Err(e) => eprintln!("job requeue failed: {}", e),
+        }
+        match aif_backend::photos::sweep_photos(&state.db, &state.config.data_dir, &now) {
+            Ok((expired, orphans, missing)) if expired + orphans + missing > 0 => eprintln!(
+                "photo sweep: {} expired, {} orphans, {} missing",
+                expired, orphans, missing
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!("photo sweep failed: {}", e),
+        }
+    }
+    aif_backend::jobs::spawn_worker(Arc::clone(&state));
     serve(state, &parsed.host, parsed.port)
 }

@@ -327,19 +327,31 @@ pub(crate) fn handle_delete(
     }
     let _ = body;
     match owned_estimate(state, &requester.user.id, id, request_id) {
-        Ok(_) => match state.db.delete_estimate(id) {
-            Ok(true) => {
-                state.audit(
-                    Some(&requester.user.id),
-                    "history_deleted",
-                    &format!("estimate={}", id),
-                    request_id,
-                );
-                Response::json(200, with_request_id(json!({"ok": true}), request_id))
-                    .with_policy(state.config.production)
+        Ok(_) => {
+            // Fetch linked photos first: estimate deletion cascades their
+            // rows via FK, so files must be collected beforehand.
+            let linked = state.db.photos_for_estimate(id).unwrap_or_default();
+            match state.db.delete_estimate(id) {
+                Ok(true) => {
+                    for photo in linked {
+                        let _ = crate::photos::delete_photo(
+                            &state.db,
+                            &state.config.data_dir,
+                            &photo.id,
+                        );
+                    }
+                    state.audit(
+                        Some(&requester.user.id),
+                        "history_deleted",
+                        &format!("estimate={}", id),
+                        request_id,
+                    );
+                    Response::json(200, with_request_id(json!({"ok": true}), request_id))
+                        .with_policy(state.config.production)
+                }
+                _ => not_found(state, request_id),
             }
-            _ => not_found(state, request_id),
-        },
+        }
         Err(r) => r,
     }
 }

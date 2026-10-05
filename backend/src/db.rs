@@ -16,12 +16,13 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::time_util::{rfc3339, unix_now};
 
 /// Current schema version (length of [`MIGRATIONS`]).
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Versioned migrations, applied in order inside one transaction each.
 /// New migrations must only add tables/columns/indexes — never drop or
 /// reinterpret existing columns — so upgrades preserve existing data.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
@@ -124,7 +125,40 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT NOT NULL DEFAULT '',
     request_id TEXT NOT NULL DEFAULT ''
 );
-"#];
+"#,
+    // v2: optional private photo retention + durable estimate jobs.
+    r#"
+CREATE TABLE IF NOT EXISTS photos (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    estimate_id TEXT REFERENCES estimates(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    mime TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_photos_user ON photos(user_id);
+CREATE INDEX IF NOT EXISTS idx_photos_estimate ON photos(estimate_id);
+CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    run_after TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    idempotency_key TEXT,
+    payload TEXT NOT NULL,
+    result TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    history_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON jobs(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(status, run_after, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idem ON jobs(user_id, idempotency_key);
+"#,
+];
 
 /// Maximum active (non-deleted) users the service supports.
 pub const MAX_ACTIVE_USERS: i64 = 2;
@@ -1210,6 +1244,385 @@ impl Db {
     }
 }
 
+/// Retained photo record (bytes live in `<data_dir>/photos/<id>`).
+#[derive(Debug, Clone)]
+pub struct Photo {
+    pub id: String,
+    pub user_id: String,
+    pub estimate_id: Option<String>,
+    pub created_at: String,
+    pub expires_at: String,
+    pub bytes: i64,
+    pub mime: String,
+}
+
+fn row_to_photo(r: &rusqlite::Row<'_>) -> Result<Photo, rusqlite::Error> {
+    Ok(Photo {
+        id: r.get(0)?,
+        user_id: r.get(1)?,
+        estimate_id: r.get(2)?,
+        created_at: r.get(3)?,
+        expires_at: r.get(4)?,
+        bytes: r.get(5)?,
+        mime: r.get(6)?,
+    })
+}
+
+const PHOTO_COLS: &str =
+    "id, user_id, estimate_id, created_at, expires_at, bytes, mime FROM photos";
+
+impl Db {
+    /// Insert a retained photo row.
+    pub fn insert_photo(&self, photo: &Photo) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO photos (id, user_id, estimate_id, created_at, expires_at, bytes, mime) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    photo.id,
+                    photo.user_id,
+                    photo.estimate_id,
+                    photo.created_at,
+                    photo.expires_at,
+                    photo.bytes,
+                    photo.mime
+                ],
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Fetch one photo by id.
+    pub fn photo_by_id(&self, id: &str) -> Result<Option<Photo>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                &format!("SELECT {} WHERE id = ?", PHOTO_COLS),
+                params![id],
+                row_to_photo,
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    /// List a user's photos, newest first (capped).
+    pub fn list_photos(&self, user_id: &str, limit: i64) -> Result<Vec<Photo>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {} WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                    PHOTO_COLS
+                ))
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![user_id, limit.clamp(1, 500)], row_to_photo)
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Total retained bytes for quota accounting.
+    pub fn photo_bytes_used(&self, user_id: &str) -> Result<i64, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT COALESCE(SUM(bytes), 0) FROM photos WHERE user_id = ?",
+                params![user_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Delete one photo row (file removal is the caller's job).
+    pub fn delete_photo(&self, id: &str) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let rows = conn
+                .execute("DELETE FROM photos WHERE id = ?", params![id])
+                .map_err(|e| e.to_string())?;
+            Ok(rows == 1)
+        })
+    }
+
+    /// All photo ids (bounded: photo counts are quota-bounded per user, so
+    /// the table stays small; used by the orphan sweep).
+    pub fn all_photo_ids(&self) -> Result<Vec<String>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT id FROM photos LIMIT 100000")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Photos linked to one estimate (history deletion removes them too).
+    pub fn photos_for_estimate(&self, estimate_id: &str) -> Result<Vec<Photo>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(&format!("SELECT {} WHERE estimate_id = ?", PHOTO_COLS))
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![estimate_id], row_to_photo)
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Delete every photo row at/after expiry; returns the deleted ids so
+    /// the caller can remove their files too.
+    pub fn delete_expired_photos(&self, now: &str) -> Result<Vec<String>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT id FROM photos WHERE expires_at <= ?")
+                .map_err(|e| e.to_string())?;
+            let ids: Vec<String> = stmt
+                .query_map(params![now], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            for id in &ids {
+                conn.execute("DELETE FROM photos WHERE id = ?", params![id])
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(ids)
+        })
+    }
+}
+
+/// Durable estimate job (background processing with restart recovery).
+#[derive(Debug, Clone)]
+pub struct Job {
+    pub id: String,
+    pub user_id: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub run_after: String,
+    pub status: String,
+    pub attempts: i64,
+    pub idempotency_key: Option<String>,
+    pub payload: String,
+    pub result: Option<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub history_id: Option<String>,
+}
+
+fn row_to_job(r: &rusqlite::Row<'_>) -> Result<Job, rusqlite::Error> {
+    Ok(Job {
+        id: r.get(0)?,
+        user_id: r.get(1)?,
+        created_at: r.get(2)?,
+        updated_at: r.get(3)?,
+        run_after: r.get(4)?,
+        status: r.get(5)?,
+        attempts: r.get(6)?,
+        idempotency_key: r.get(7)?,
+        payload: r.get(8)?,
+        result: r.get(9)?,
+        error_code: r.get(10)?,
+        error_message: r.get(11)?,
+        history_id: r.get(12)?,
+    })
+}
+
+const JOB_COLS: &str = "id, user_id, created_at, updated_at, run_after, status, attempts, idempotency_key, payload, result, error_code, error_message, history_id FROM jobs";
+
+/// Maximum estimate attempts per job before it fails permanently.
+pub const MAX_JOB_ATTEMPTS: i64 = 3;
+
+impl Db {
+    /// Create a queued job. Duplicate idempotency keys return the existing
+    /// job id instead of a new row.
+    pub fn create_job(
+        &self,
+        id: &str,
+        user_id: &str,
+        idempotency_key: Option<&str>,
+        payload: &str,
+        now: &str,
+    ) -> Result<(String, bool), String> {
+        if let Some(key) = idempotency_key {
+            let existing: Option<String> = self.with_conn(|conn| {
+                conn.query_row(
+                    "SELECT id FROM jobs WHERE user_id = ? AND idempotency_key = ?",
+                    params![user_id, key],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())
+            })?;
+            if let Some(job_id) = existing {
+                return Ok((job_id, true));
+            }
+        }
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO jobs (id, user_id, created_at, updated_at, run_after, status, attempts, idempotency_key, payload) VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, ?)",
+                params![id, user_id, now, now, now, idempotency_key, payload],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok((id.to_string(), false))
+        })
+    }
+
+    /// Fetch one job by id.
+    pub fn job_by_id(&self, id: &str) -> Result<Option<Job>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                &format!("SELECT {} WHERE id = ?", JOB_COLS),
+                params![id],
+                row_to_job,
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    /// List a user's jobs, newest first (capped).
+    pub fn list_jobs(&self, user_id: &str, limit: i64) -> Result<Vec<Job>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {} WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                    JOB_COLS
+                ))
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![user_id, limit.clamp(1, 200)], row_to_job)
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Atomically claim the oldest due queued job (worker pickup).
+    pub fn claim_next_job(&self, now: &str) -> Result<Option<Job>, String> {
+        self.with_conn(|conn| {
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            let id: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY created_at LIMIT 1",
+                    params![now],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            let Some(id) = id else {
+                return Ok(None);
+            };
+            tx.execute(
+                "UPDATE jobs SET status = 'active', updated_at = ? WHERE id = ? AND status = 'queued'",
+                params![now, id],
+            )
+            .map_err(|e| e.to_string())?;
+            let job = tx
+                .query_row(
+                    &format!("SELECT {} WHERE id = ?", JOB_COLS),
+                    params![id],
+                    row_to_job,
+                )
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+            Ok(Some(job))
+        })
+    }
+
+    /// Finish a job: success stores the result, failure stores the code.
+    /// Requeue schedules another attempt with backoff.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_job(
+        &self,
+        id: &str,
+        status: &str,
+        now: &str,
+        run_after: Option<&str>,
+        result: Option<&str>,
+        error_code: Option<&str>,
+        error_message: Option<&str>,
+        history_id: Option<&str>,
+    ) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE jobs SET status = ?, updated_at = ?, run_after = COALESCE(?, run_after), attempts = attempts + 1, result = COALESCE(?, result), error_code = ?, error_message = ?, history_id = COALESCE(?, history_id) WHERE id = ?",
+                params![status, now, run_after, result, error_code, error_message, history_id, id],
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Cancel a queued job (active jobs run to completion).
+    pub fn cancel_job(&self, id: &str, now: &str) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let rows = conn
+                .execute(
+                    "UPDATE jobs SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'queued'",
+                    params![now, id],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(rows == 1)
+        })
+    }
+
+    /// Crash recovery: jobs left `active` at shutdown go back to `queued`.
+    /// Returns the number requeued.
+    pub fn requeue_active_jobs(&self, now: &str) -> Result<i64, String> {
+        self.with_conn(|conn| {
+            let rows = conn
+                .execute(
+                    "UPDATE jobs SET status = 'queued', updated_at = ? WHERE status = 'active'",
+                    params![now],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(rows as i64)
+        })
+    }
+
+    /// Prune terminal jobs older than `before` (history rows are untouched).
+    /// Returns the number pruned.
+    pub fn prune_jobs(&self, before: &str) -> Result<i64, String> {
+        self.with_conn(|conn| {
+            let rows = conn
+                .execute(
+                    "DELETE FROM jobs WHERE status IN ('success', 'failed', 'cancelled', 'expired') AND updated_at < ?",
+                    params![before],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(rows as i64)
+        })
+    }
+
+    /// Expire stale queued jobs that never ran.
+    pub fn expire_stale_queued(&self, before: &str, now: &str) -> Result<i64, String> {
+        self.with_conn(|conn| {
+            let rows = conn
+                .execute(
+                    "UPDATE jobs SET status = 'expired', updated_at = ? WHERE status = 'queued' AND created_at < ?",
+                    params![now, before],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(rows as i64)
+        })
+    }
+
+    /// Count a user's non-terminal jobs (queue-depth guard).
+    pub fn open_job_count(&self, user_id: &str) -> Result<i64, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status IN ('queued', 'active')",
+                params![user_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1265,6 +1678,106 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(db.list_animals("u1", true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migration_v2_preserves_v1_data() {
+        // Simulate an old v1 database, then open with the current code and
+        // prove existing rows survive the upgrade.
+        let dir = std::env::temp_dir().join(format!("aif-db-v1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("aif.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+                 INSERT INTO schema_migrations VALUES (1, '2026-01-01T00:00:00Z');
+                 CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL DEFAULT '', password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_login_at TEXT);
+                 INSERT INTO users VALUES ('u1', 'a@example.com', 'A', 'h', 'user', 'active', 't', 't', NULL);",
+            )
+            .unwrap();
+        }
+        let db = Db::open(dir.to_str().unwrap()).unwrap();
+        assert_eq!(db.schema_version().unwrap(), SCHEMA_VERSION);
+        assert_eq!(db.active_user_count().unwrap(), 1);
+        assert!(db.user_by_id("u1").unwrap().is_some());
+        // v2 tables exist and work.
+        assert!(db.list_photos("u1", 10).unwrap().is_empty());
+        assert!(db.list_jobs("u1", 10).unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn job_lifecycle_claim_finish_cancel() {
+        let db = test_db("jobs");
+        db.create_user("u1", "a@example.com", "A", "h", "user")
+            .unwrap();
+        let now = "2026-06-01T00:00:00Z";
+        let (id, dup) = db
+            .create_job("j1", "u1", Some("k1"), r#"{"a":1}"#, now)
+            .unwrap();
+        assert!(!dup);
+        // Duplicate idempotency keys return the existing job, not a new row.
+        let (id2, dup2) = db
+            .create_job("j2", "u1", Some("k1"), r#"{"a":2}"#, now)
+            .unwrap();
+        assert!(dup2);
+        assert_eq!(id, id2);
+        let claimed = db.claim_next_job(now).unwrap().unwrap();
+        assert_eq!(claimed.id, "j1");
+        assert_eq!(claimed.status, "active");
+        // Nothing else to claim; cancel only works on queued jobs.
+        assert!(db.claim_next_job(now).unwrap().is_none());
+        assert!(!db.cancel_job("j1", now).unwrap());
+        db.finish_job(
+            "j1",
+            "success",
+            now,
+            None,
+            Some(r#"{"ok":true}"#),
+            None,
+            None,
+            Some("h1"),
+        )
+        .unwrap();
+        let done = db.job_by_id("j1").unwrap().unwrap();
+        assert_eq!(done.status, "success");
+        assert_eq!(done.history_id.as_deref(), Some("h1"));
+        assert_eq!(done.attempts, 1);
+        // Crash recovery requeues interrupted work without duplicating it.
+        db.create_job("j3", "u1", None, "{}", now).unwrap();
+        let active = db.claim_next_job(now).unwrap().unwrap();
+        assert_eq!(active.status, "active");
+        assert_eq!(db.requeue_active_jobs(now).unwrap(), 1);
+        assert_eq!(db.job_by_id("j3").unwrap().unwrap().status, "queued");
+        // Cancel a queued job; prune only terminal rows.
+        assert!(db.cancel_job("j3", now).unwrap());
+        assert_eq!(db.prune_jobs("2026-07-01T00:00:00Z").unwrap(), 2);
+        assert!(db.job_by_id("j1").unwrap().is_none());
+    }
+
+    #[test]
+    fn photo_expiry_deletes_only_expired_rows() {
+        let db = test_db("photoexp");
+        db.create_user("u1", "a@example.com", "A", "h", "user")
+            .unwrap();
+        let mk = |id: &str, expires: &str| Photo {
+            id: id.to_string(),
+            user_id: "u1".to_string(),
+            estimate_id: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: expires.to_string(),
+            bytes: 10,
+            mime: "image/jpeg".to_string(),
+        };
+        db.insert_photo(&mk("old", "2026-02-01T00:00:00Z")).unwrap();
+        db.insert_photo(&mk("fresh", "2027-01-01T00:00:00Z"))
+            .unwrap();
+        assert_eq!(db.photo_bytes_used("u1").unwrap(), 20);
+        let deleted = db.delete_expired_photos("2026-06-01T00:00:00Z").unwrap();
+        assert_eq!(deleted, vec!["old".to_string()]);
+        assert!(db.photo_by_id("fresh").unwrap().is_some());
     }
 
     #[test]

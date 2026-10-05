@@ -37,6 +37,21 @@ pub(crate) fn handle_summary(
         .map(|a| a.len() as i64)
         .unwrap_or(0);
     let estimates = state.db.estimate_count(&requester.user.id).unwrap_or(0);
+    let photos = state
+        .db
+        .list_photos(&requester.user.id, 1)
+        .map(|_| state.db.photo_bytes_used(&requester.user.id).unwrap_or(0))
+        .unwrap_or(0);
+    let photo_policy = if state.config.retain_photos {
+        format!(
+            "opt-in retention: kept {} bytes of {} MiB quota, expiring after {} days; excluded from database backups",
+            photos,
+            state.config.photo_quota_mb,
+            state.config.photo_ttl_days,
+        )
+    } else {
+        "transient-only: uploaded photos are sent to the AI provider for the estimate and are never stored on this server".to_string()
+    };
     Response::json(
         200,
         with_request_id(
@@ -51,7 +66,7 @@ pub(crate) fn handle_summary(
                 "estimates": estimates,
                 "today_image_estimates": usage,
                 "daily_limit": state.config.daily_estimate_limit,
-                "photo_policy": "transient-only: uploaded photos are sent to the AI provider for the estimate and are never stored on this server",
+                "photo_policy": photo_policy,
             }),
             request_id,
         ),
@@ -202,6 +217,13 @@ pub(crate) fn handle_delete(
         &format!("email={}", requester.user.email),
         request_id,
     );
+    // Remove retained photo files first: row deletion cascades via FK, but
+    // files need explicit removal.
+    if let Ok(photos) = state.db.list_photos(&requester.user.id, 500) {
+        for photo in photos {
+            let _ = crate::photos::delete_photo(&state.db, &state.config.data_dir, &photo.id);
+        }
+    }
     match state.db.delete_account(&requester.user.id) {
         Ok(_) => Response::json(200, with_request_id(json!({"ok": true}), request_id))
             .with_header(

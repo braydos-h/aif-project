@@ -325,6 +325,24 @@ pub(crate) fn handle_status(
         Err(r) => return r,
     };
     let active_users = state.db.active_user_count().unwrap_or(-1);
+    let usage = state.db.usage_rows(60).unwrap_or_default();
+    let mut emails = std::collections::HashMap::new();
+    if let Ok(users) = state.db.list_users() {
+        for user in users {
+            emails.insert(user.id, user.email);
+        }
+    }
+    let data_mb = dir_size_mb(&state.config.data_dir);
+    let alerts = build_alerts(
+        &usage,
+        &emails,
+        state.config.daily_estimate_limit,
+        state.provider_failures_last_hour(),
+        data_mb,
+        state.config.disk_alert_mb,
+        state.inference_paused(),
+        active_users,
+    );
     Response::json(
         200,
         with_request_id(
@@ -339,11 +357,98 @@ pub(crate) fn handle_status(
                 "total_requests": state.metrics.total(),
                 "rejected_connections": state.metrics.rejected(),
                 "cache_entries": state.cache.len(),
+                "data_dir_mb": data_mb,
+                "provider_failures_last_hour": state.provider_failures_last_hour(),
+                "photo_retention": state.config.retain_photos,
+                "jobs_enabled": state.config.jobs_enabled,
+                "alerts": alerts,
             }),
             request_id,
         ),
     )
     .with_policy(state.config.production)
+}
+
+/// Operator alert entry: usage spikes, provider error bursts, disk
+/// pressure, pause state, and account-cap state. Surfaced in the operator
+/// panel so unexpected spend or failure is noticed without extra infra.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_alerts(
+    usage: &[(String, String, i64)],
+    emails: &std::collections::HashMap<String, String>,
+    daily_limit: u64,
+    failures_last_hour: usize,
+    data_mb: u64,
+    disk_alert_mb: u64,
+    paused: bool,
+    active_users: i64,
+) -> Vec<Value> {
+    let mut alerts = Vec::new();
+    let today = crate::time_util::utc_day();
+    for (user_id, day, count) in usage {
+        if day == &today && daily_limit > 0 && (*count as u64) * 5 >= daily_limit * 4 {
+            let who = emails.get(user_id).map(String::as_str).unwrap_or(user_id);
+            alerts.push(json!({
+                "kind": "usage_high",
+                "message": format!("{} used {} of {} photo estimates today", who, count, daily_limit),
+            }));
+        }
+    }
+    if failures_last_hour >= 5 {
+        alerts.push(json!({
+            "kind": "provider_errors",
+            "message": format!("{} provider failures in the last hour — check the provider account and logs", failures_last_hour),
+        }));
+    }
+    if data_mb >= disk_alert_mb {
+        alerts.push(json!({
+            "kind": "disk_high",
+            "message": format!("data dir uses {} MiB (alert at {} MiB)", data_mb, disk_alert_mb),
+        }));
+    }
+    if paused {
+        alerts.push(json!({
+            "kind": "inference_paused",
+            "message": "AI inference is paused — photo estimates answer 503",
+        }));
+    }
+    if active_users >= crate::db::MAX_ACTIVE_USERS {
+        alerts.push(json!({
+            "kind": "user_cap",
+            "message": "two accounts are active (service cap reached)",
+        }));
+    }
+    alerts
+}
+
+/// Approximate data-dir size in MiB (bounded walk: photo counts are
+/// quota-bounded, so the tree stays small).
+pub(crate) fn dir_size_mb(path: &str) -> u64 {
+    fn walk(dir: &std::path::Path, budget: &mut usize, total: &mut u64) {
+        if *budget == 0 {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            if *budget == 0 {
+                return;
+            }
+            *budget -= 1;
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, budget, total);
+            } else if let Ok(meta) = entry.metadata() {
+                *total += meta.len();
+            }
+        }
+    }
+    let mut total = 0u64;
+    let mut budget = 100_000usize;
+    walk(std::path::Path::new(path), &mut budget, &mut total);
+    total / (1024 * 1024)
 }
 
 /// `POST /api/operator/pause` — flip the inference pause switch.
@@ -443,4 +548,47 @@ fn not_found(state: &ServerState, request_id: &str) -> Response {
         error_json(super::response::CODE_NOT_FOUND, "Not found", request_id),
     )
     .with_policy(state.config.production)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn emails() -> std::collections::HashMap<String, String> {
+        [("u1".to_string(), "a@example.com".to_string())]
+            .into_iter()
+            .collect()
+    }
+
+    #[test]
+    fn alerts_fire_at_documented_thresholds() {
+        // 80% usage trips the alert; 79% does not.
+        let usage = vec![("u1".to_string(), crate::time_util::utc_day(), 8)];
+        let alerts = build_alerts(&usage, &emails(), 10, 0, 0, 1024, false, 1);
+        assert!(alerts.iter().any(|a| a["kind"] == "usage_high"));
+        let usage = vec![("u1".to_string(), crate::time_util::utc_day(), 7)];
+        let alerts = build_alerts(&usage, &emails(), 10, 0, 0, 1024, false, 1);
+        assert!(!alerts.iter().any(|a| a["kind"] == "usage_high"));
+        // Provider bursts and disk pressure alert; pause and cap inform.
+        let alerts = build_alerts(&[], &emails(), 10, 5, 2048, 1024, true, 2);
+        for kind in [
+            "provider_errors",
+            "disk_high",
+            "inference_paused",
+            "user_cap",
+        ] {
+            assert!(alerts.iter().any(|a| a["kind"] == kind), "missing {}", kind);
+        }
+        let quiet = build_alerts(&[], &emails(), 10, 4, 10, 1024, false, 1);
+        assert!(quiet.is_empty());
+    }
+
+    #[test]
+    fn dir_size_counts_files() {
+        let dir = std::env::temp_dir().join(format!("aif-dirsize-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.bin"), vec![0u8; 3 * 1024 * 1024]).unwrap();
+        assert_eq!(dir_size_mb(dir.to_str().unwrap()), 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

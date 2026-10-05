@@ -38,8 +38,10 @@ pub mod csv;
 pub mod estimate;
 pub mod handlers;
 pub mod history;
+pub mod jobs;
 pub mod json_util;
 pub mod operator;
+pub mod photos;
 pub mod request_id;
 pub mod response;
 pub mod server;
@@ -49,7 +51,7 @@ pub mod validation;
 pub use server::serve;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::cache::Cache;
 use crate::config::Config;
@@ -130,6 +132,9 @@ pub struct ServerState {
     pub(crate) recovery_limiter: AttemptLimiter,
     pub(crate) inference_gate: InferenceGate,
     paused: AtomicBool,
+    /// Timestamps of recent provider (Ollama) failures for spending/error
+    /// alerting. Bounded: entries older than an hour are dropped on read.
+    provider_failures: std::sync::Mutex<Vec<Instant>>,
 }
 
 impl ServerState {
@@ -153,6 +158,7 @@ impl ServerState {
             recovery_limiter: AttemptLimiter::new(5, 3600),
             inference_gate: InferenceGate::new(gate_max),
             paused: AtomicBool::new(paused),
+            provider_failures: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -165,6 +171,31 @@ impl ServerState {
     /// Flip the runtime pause switch (operator only, via API).
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Record a provider (Ollama) failure for error/spending alerting.
+    pub fn note_provider_failure(&self) {
+        if let Ok(mut failures) = self.provider_failures.lock() {
+            failures.push(Instant::now());
+            // Bound memory: keep at most a day of worst-case failures.
+            if failures.len() > 10000 {
+                let excess = failures.len() - 10000;
+                failures.drain(..excess);
+            }
+        }
+    }
+
+    /// Provider failures in the last hour (drops older entries).
+    pub fn provider_failures_last_hour(&self) -> usize {
+        let cutoff = Duration::from_secs(3600);
+        match self.provider_failures.lock() {
+            Ok(mut failures) => {
+                let now = Instant::now();
+                failures.retain(|t| now.duration_since(*t) < cutoff);
+                failures.len()
+            }
+            Err(_) => 0,
+        }
     }
 
     /// Best-effort audit logging: failures never fail the request.
@@ -220,6 +251,7 @@ fn dispatch(
             cors_origin: Some("*".to_string()),
             hsts: false,
             attachment: None,
+            cacheable: false,
         }),
         ("GET", "/api/me") => auth_api::handle_me(body, request_id, state, head),
         ("POST", "/api/auth/login") => {
@@ -307,6 +339,23 @@ fn dispatch(
         ("POST", "/estimate-batch") => {
             handle_estimate_batch(body, request_id, state, head, peer_ip)
         }
+        ("POST", "/api/jobs") => jobs::handle_create(body, request_id, state, head, peer_ip),
+        ("GET", "/api/jobs") => jobs::handle_list(request_id, state, head, peer_ip),
+        ("GET", path) if path.starts_with("/api/jobs/") => {
+            route_jobs_get(path, body, request_id, state, head, peer_ip)
+        }
+        ("POST", path) if path.starts_with("/api/jobs/") => {
+            route_jobs_post(path, body, request_id, state, head, peer_ip)
+        }
+        ("GET", "/api/photos") => photos::handle_list(request_id, state, head, peer_ip),
+        ("GET", path) if path.starts_with("/api/photos/") => {
+            let id = path.strip_prefix("/api/photos/").unwrap_or("");
+            photos::handle_get(id, request_id, state, head, peer_ip)
+        }
+        ("DELETE", path) if path.starts_with("/api/photos/") => {
+            let id = path.strip_prefix("/api/photos/").unwrap_or("");
+            photos::handle_delete(id, body, request_id, state, head, peer_ip)
+        }
         (_, _) => policy(Response::json(
             404,
             error_json(CODE_NOT_FOUND, "Not found", request_id),
@@ -368,6 +417,44 @@ fn route_animals_get(
                 head,
                 peer_ip,
             );
+        }
+    }
+    Response::json(404, error_json(CODE_NOT_FOUND, "Not found", request_id))
+        .with_policy(state.config.production)
+}
+
+/// Route `GET /api/jobs/{id}` (detail; anything else 404).
+fn route_jobs_get(
+    path: &str,
+    _body: &[u8],
+    request_id: &str,
+    state: &ServerState,
+    head: &RequestHead,
+    peer_ip: &str,
+) -> Response {
+    if let Some(id) = path.strip_prefix("/api/jobs/") {
+        if !id.is_empty() && !id.contains('/') {
+            return jobs::handle_get(id, request_id, state, head, peer_ip);
+        }
+    }
+    Response::json(404, error_json(CODE_NOT_FOUND, "Not found", request_id))
+        .with_policy(state.config.production)
+}
+
+/// Route `POST /api/jobs/{id}/cancel`.
+fn route_jobs_post(
+    path: &str,
+    body: &[u8],
+    request_id: &str,
+    state: &ServerState,
+    head: &RequestHead,
+    peer_ip: &str,
+) -> Response {
+    if let Some(rest) = path.strip_prefix("/api/jobs/") {
+        if let Some(id) = rest.strip_suffix("/cancel") {
+            if !id.is_empty() && !id.contains('/') {
+                return jobs::handle_cancel(id, body, request_id, state, head, peer_ip);
+            }
         }
     }
     Response::json(404, error_json(CODE_NOT_FOUND, "Not found", request_id))

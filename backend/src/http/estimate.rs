@@ -244,7 +244,7 @@ pub(crate) fn handle_estimate_batch(
 }
 
 /// Validate an idempotency key: short opaque client token.
-fn validate_idempotency_key(key: &str) -> Result<(), String> {
+pub(crate) fn validate_idempotency_key(key: &str) -> Result<(), String> {
     if key.is_empty() || key.len() > MAX_IDEMPOTENCY_KEY_BYTES {
         return Err("idempotency_key must be 1-128 characters.".to_string());
     }
@@ -417,6 +417,17 @@ pub(crate) fn estimate_one(
     }
     let idempotency_key = idempotency_key.map(str::to_string);
 
+    // Photo retention is opt-in per estimate and requires a logged-in
+    // caller; the server must also enable it.
+    let retain_photo = match payload.get("retain_photo") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return err(CODE_INVALID_OPTIONS, "retain_photo must be true or false"),
+    };
+    if retain_photo && requester.is_none() {
+        return err(CODE_INVALID_OPTIONS, "Log in to retain photos");
+    }
+
     // Idempotent replay: a retried upload returns the stored result
     // without spending quota or provider inference again.
     if let (Some(requester), Some(key)) = (requester, &idempotency_key) {
@@ -460,6 +471,8 @@ pub(crate) fn estimate_one(
                         &idempotency_key,
                         request_id,
                         "none",
+                        false,
+                        None,
                     ),
                     request_id,
                 ),
@@ -621,6 +634,7 @@ pub(crate) fn estimate_one(
                 result["body_length_cm"] = Value::from(l);
             }
             let provider = request_config.backend.clone();
+            let image_owned = image_reference.to_string();
             let saved = save_authenticated(
                 state,
                 requester,
@@ -631,6 +645,8 @@ pub(crate) fn estimate_one(
                 &idempotency_key,
                 request_id,
                 &provider,
+                retain_photo,
+                Some(image_owned),
             );
             (200, with_request_id(saved, request_id))
         }
@@ -641,6 +657,7 @@ pub(crate) fn estimate_one(
                 (400, error_json(CODE_INVALID_IMAGE, &message, request_id))
             } else {
                 eprintln!("estimation failed [{}]: {}", request_id, message);
+                state.note_provider_failure();
                 (
                     502,
                     error_json(CODE_ESTIMATION_FAILED, &message, request_id),
@@ -653,6 +670,10 @@ pub(crate) fn estimate_one(
 /// Persist an authenticated estimate to server-side history. Anonymous
 /// results are returned unsaved. A failed insert never fails the estimate
 /// itself; a key race returns the winning row (replay semantics).
+///
+/// When photo retention is enabled server-side and requested per estimate,
+/// the processed photo is stored privately and linked to the history row
+/// (`photo_id` on success, `photo_error` when storage fails).
 #[allow(clippy::too_many_arguments)]
 fn save_authenticated(
     state: &ServerState,
@@ -664,6 +685,8 @@ fn save_authenticated(
     idempotency_key: &Option<String>,
     request_id: &str,
     provider: &str,
+    retain_photo: bool,
+    image_reference: Option<String>,
 ) -> Value {
     let requester = match requester {
         Some(r) => r,
@@ -688,6 +711,17 @@ fn save_authenticated(
         Ok(true) => {
             result["history_id"] = Value::from(row.id.clone());
             result["saved"] = Value::from(true);
+            if retain_photo && state.config.retain_photos {
+                match retain_estimate_photo(state, requester, &row.id, image_reference) {
+                    Ok(photo_id) => {
+                        result["photo_id"] = Value::from(photo_id);
+                    }
+                    Err(message) => {
+                        eprintln!("photo retention failed [{}]: {}", request_id, message);
+                        result["photo_error"] = Value::from(message);
+                    }
+                }
+            }
             result
         }
         _ => {
@@ -708,6 +742,41 @@ fn save_authenticated(
             }
         }
     }
+}
+
+/// Store the processed photo for a saved history row: re-derive the image
+/// bytes from the original reference (base64/data-URI decode or a guarded
+/// refetch), strip location metadata, enforce quotas, and link the row.
+fn retain_estimate_photo(
+    state: &ServerState,
+    requester: &Requester,
+    history_id: &str,
+    image_reference: Option<String>,
+) -> Result<String, String> {
+    let reference = image_reference
+        .filter(|r| !r.is_empty())
+        .ok_or_else(|| "no image available for retention".to_string())?;
+    let bytes = if reference.starts_with("http://") || reference.starts_with("https://") {
+        crate::validate::fetch::fetch_url(&reference).map_err(|e| e.to_string())?
+    } else {
+        let mut stripped = reference.as_str();
+        let lower = reference.to_ascii_lowercase();
+        if let Some(idx) = lower.find(";base64,") {
+            if lower.starts_with("data:") {
+                stripped = &reference[idx + ";base64,".len()..];
+            }
+        }
+        crate::validate::base64::decode_base64(stripped).map_err(|e| e.to_string())?
+    };
+    crate::photos::store_photo(
+        &state.db,
+        &state.config.data_dir,
+        &requester.user.id,
+        Some(history_id),
+        &bytes,
+        state.config.photo_ttl_days,
+        state.config.photo_quota_mb.saturating_mul(1024 * 1024),
+    )
 }
 
 /// Echo validated `animal_*` hints onto a success body. Uses dedicated

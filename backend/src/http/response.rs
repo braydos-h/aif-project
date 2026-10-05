@@ -49,6 +49,9 @@ pub(crate) struct Response {
     pub(crate) hsts: bool,
     /// Filename for `Content-Disposition: attachment` downloads.
     pub(crate) attachment: Option<String>,
+    /// Emit ETag/Cache-Control for immutable compiled assets. Private
+    /// downloads (photos) opt out so shared caches never store them.
+    pub(crate) cacheable: bool,
 }
 
 impl Response {
@@ -65,6 +68,7 @@ impl Response {
             cors_origin: Some("*".to_string()),
             hsts: false,
             attachment: None,
+            cacheable: false,
         }
     }
 
@@ -77,6 +81,7 @@ impl Response {
             cors_origin: Some("*".to_string()),
             hsts: false,
             attachment: None,
+            cacheable: true,
         }
     }
 
@@ -89,6 +94,7 @@ impl Response {
             cors_origin: None,
             hsts: false,
             attachment: Some(filename.to_string()),
+            cacheable: false,
         }
     }
 
@@ -162,7 +168,8 @@ pub(crate) fn write_response(
     // Compiled-in WebUI/demo bytes are immutable for a given binary build,
     // so browsers may cache them aggressively. JSON API responses stay
     // uncacheable by default (no Cache-Control/ETag emitted for them).
-    let cache_headers = if !response.body.is_empty()
+    let cache_headers = if response.cacheable
+        && !response.body.is_empty()
         && (response.content_type.starts_with("text/html")
             || response.content_type.starts_with("text/css")
             || response.content_type.contains("javascript")
