@@ -13,3 +13,8 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+
+# Local runtime databases (SQLite test/dev artifacts) — never commit.
+*.db
+*.db-shm
+*.db-wal
