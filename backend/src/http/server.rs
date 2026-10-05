@@ -270,7 +270,9 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
         return write_response(&mut stream, &request_id, &response);
     }
 
-    if head.method == "POST" && head.content_length > MAX_BODY_BYTES {
+    if matches!(head.method.as_str(), "POST" | "PUT" | "DELETE" | "PATCH")
+        && head.content_length > MAX_BODY_BYTES
+    {
         state.metrics.record_request();
         let response = Response::json(
             400,
@@ -283,7 +285,9 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) -> std::io::Res
     // allocation up front: `take` bounds the read and the length check turns
     // short bodies into 400 instead of dispatching garbage.
     let mut body = Vec::new();
-    if head.method == "POST" && head.content_length > 0 {
+    if matches!(head.method.as_str(), "POST" | "PUT" | "DELETE" | "PATCH")
+        && head.content_length > 0
+    {
         body.reserve(head.content_length.min(64 * 1024));
         let truncated = reader
             .by_ref()

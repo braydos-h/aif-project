@@ -938,7 +938,7 @@ impl Db {
         self.with_conn(|conn| {
             conn.execute(
                 "UPDATE animals SET name = ?, breed = ?, sex = ?, birth_year = ?, notes = ?, archived = ?, updated_at = ? WHERE id = ?",
-                params![id, name, breed, sex, birth_year, notes, archived as i64, rfc3339(unix_now()), id],
+                params![name, breed, sex, birth_year, notes, archived as i64, rfc3339(unix_now()), id],
             )
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -1265,6 +1265,41 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(db.list_animals("u1", true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn expired_sessions_fail_closed() {
+        let db = test_db("sessexp");
+        db.create_user("u1", "a@example.com", "A", "h", "user")
+            .unwrap();
+        db.create_session("live", "u1", "csrf", "2999-01-01T00:00:00Z")
+            .unwrap();
+        db.create_session("dead", "u1", "csrf", "2020-01-01T00:00:00Z")
+            .unwrap();
+        assert!(db
+            .check_session("live", "2026-01-01T00:00:00Z")
+            .unwrap()
+            .is_some());
+        assert!(db
+            .check_session("dead", "2026-01-01T00:00:00Z")
+            .unwrap()
+            .is_none());
+        assert!(db
+            .check_session("nope", "2026-01-01T00:00:00Z")
+            .unwrap()
+            .is_none());
+        // Rotation revokes the old token and honors the new one.
+        db.rotate_session("live", "next", "u1", "csrf2", "2999-01-01T00:00:00Z")
+            .unwrap();
+        assert!(db
+            .check_session("live", "2026-01-01T00:00:00Z")
+            .unwrap()
+            .is_none());
+        let rotated = db
+            .check_session("next", "2026-01-01T00:00:00Z")
+            .unwrap()
+            .unwrap();
+        assert_eq!(rotated.csrf_token, "csrf2");
     }
 
     #[test]

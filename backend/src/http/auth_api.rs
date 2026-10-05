@@ -294,29 +294,8 @@ pub(crate) fn handle_accept_invite(
             );
         }
     };
-    if invite.revoked_at.is_some() {
-        return invite_error(
-            state,
-            request_id,
-            super::response::CODE_INVITE_REVOKED,
-            "That invitation was revoked; ask the operator for a new one",
-        );
-    }
-    if invite.used_at.is_some() {
-        return invite_error(
-            state,
-            request_id,
-            super::response::CODE_INVITE_USED,
-            "That invitation was already used",
-        );
-    }
-    if invite.expires_at.as_str() < rfc3339(unix_now()).as_str() {
-        return invite_error(
-            state,
-            request_id,
-            super::response::CODE_INVITE_EXPIRED,
-            "That invitation expired; ask the operator for a new one",
-        );
+    if let Err(code) = invite_usable(&invite, &rfc3339(unix_now())) {
+        return invite_error(state, request_id, code, invite_error_message(code));
     }
     if let Err(message) = check_password_policy(&password) {
         return Response::json(
@@ -417,6 +396,33 @@ pub(crate) fn handle_accept_invite(
 
 fn invite_error(state: &ServerState, request_id: &str, code: &str, message: &str) -> Response {
     Response::json(400, error_json(code, message, request_id)).with_policy(state.config.production)
+}
+
+/// Check an invite's usability at `now` (RFC 3339 UTC). Returns the
+/// machine-readable failure code, or `Ok` when the invite is live.
+pub(crate) fn invite_usable(invite: &crate::db::Invite, now: &str) -> Result<(), &'static str> {
+    if invite.revoked_at.is_some() {
+        return Err(crate::http::response::CODE_INVITE_REVOKED);
+    }
+    if invite.used_at.is_some() {
+        return Err(crate::http::response::CODE_INVITE_USED);
+    }
+    if invite.expires_at.as_str() < now {
+        return Err(crate::http::response::CODE_INVITE_EXPIRED);
+    }
+    Ok(())
+}
+
+fn invite_error_message(code: &str) -> &'static str {
+    if code == super::response::CODE_INVITE_REVOKED {
+        "That invitation was revoked; ask the operator for a new one"
+    } else if code == super::response::CODE_INVITE_USED {
+        "That invitation was already used"
+    } else if code == super::response::CODE_INVITE_EXPIRED {
+        "That invitation expired; ask the operator for a new one"
+    } else {
+        "That invitation link is not valid"
+    }
 }
 
 /// `POST /api/auth/recovery/request` — always answers success (generic, no
@@ -708,4 +714,39 @@ pub(crate) fn handle_update_profile(
         with_request_id(json!({"ok": true, "display_name": name}), request_id),
     )
     .with_policy(state.config.production)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn invite_with(used: bool, revoked: bool, expires: &str) -> crate::db::Invite {
+        crate::db::Invite {
+            id: "inv1".to_string(),
+            email: "a@example.com".to_string(),
+            role: "user".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: expires.to_string(),
+            used_at: used.then(|| "2026-02-01T00:00:00Z".to_string()),
+            revoked_at: revoked.then(|| "2026-02-01T00:00:00Z".to_string()),
+        }
+    }
+
+    #[test]
+    fn invite_lifecycle_codes() {
+        let now = "2026-06-01T00:00:00Z";
+        assert!(invite_usable(&invite_with(false, false, "2026-07-01T00:00:00Z"), now).is_ok());
+        assert_eq!(
+            invite_usable(&invite_with(false, false, "2026-05-01T00:00:00Z"), now),
+            Err(crate::http::response::CODE_INVITE_EXPIRED)
+        );
+        assert_eq!(
+            invite_usable(&invite_with(true, false, "2026-07-01T00:00:00Z"), now),
+            Err(crate::http::response::CODE_INVITE_USED)
+        );
+        assert_eq!(
+            invite_usable(&invite_with(false, true, "2026-07-01T00:00:00Z"), now),
+            Err(crate::http::response::CODE_INVITE_REVOKED)
+        );
+    }
 }

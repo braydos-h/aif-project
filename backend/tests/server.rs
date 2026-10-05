@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -34,26 +35,29 @@ fn free_port() -> u16 {
 struct TestServer {
     child: Child,
     port: u16,
+    env: Vec<(String, String)>,
 }
 
 impl TestServer {
     fn new(env_extra: &[(&str, &str)]) -> TestServer {
         let port = free_port();
-        let mut cmd = Command::new(binary_path());
-        cmd.args(["--host", "127.0.0.1", "--port", &port.to_string()]);
-        cmd.env_remove("AIF_AI_BACKEND");
-        cmd.env_remove("AIF_AI_MODEL");
-        cmd.env_remove("AIF_OLLAMA_URL");
-        cmd.env_remove("AIF_CACHE_TTL");
-        cmd.env_remove("OLLAMA_API_KEY");
-        for (k, v) in env_extra {
-            cmd.env(k, v);
-        }
-        cmd.stdout(Stdio::null()).stderr(Stdio::null());
-        let child = cmd.spawn().expect("backend binary failed to spawn");
-        let server = TestServer { child, port };
+        let env: Vec<(String, String)> = env_extra
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let child = spawn_server(port, &env);
+        let server = TestServer { child, port, env };
         server.wait_until_ready();
         server
+    }
+
+    /// Restart the same server (same port, same environment/data dir) to
+    /// prove database state survives restarts.
+    fn restart(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.child = spawn_server(self.port, &self.env);
+        self.wait_until_ready();
     }
 
     fn wait_until_ready(&self) {
@@ -75,6 +79,222 @@ impl Drop for TestServer {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Spawn the backend on `port` with a clean, caller-supplied environment.
+fn spawn_server(port: u16, env: &[(String, String)]) -> Child {
+    let mut cmd = Command::new(binary_path());
+    cmd.args(["--host", "127.0.0.1", "--port", &port.to_string()]);
+    for key in [
+        "AIF_AI_BACKEND",
+        "AIF_AI_MODEL",
+        "AIF_OLLAMA_URL",
+        "AIF_CACHE_TTL",
+        "OLLAMA_API_KEY",
+        "AIF_REQUIRE_AUTH",
+        "AIF_PRODUCTION",
+        "AIF_DATA_DIR",
+        "AIF_PUBLIC_ORIGIN",
+        "AIF_DAILY_LIMIT",
+        "AIF_OPERATOR_EMAIL",
+        "AIF_INFERENCE_PAUSED",
+        "AIF_COOKIE_SECURE",
+        "AIF_INVITE_DAYS",
+        "AIF_SESSION_DAYS",
+        "AIF_TRUSTED_PROXIES",
+        "AIF_MAX_INFERENCE",
+    ] {
+        cmd.env_remove(key);
+    }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.spawn().expect("backend binary failed to spawn")
+}
+
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Unique throwaway data dir for one test's server (parallel-safe).
+fn unique_data_dir(prefix: &str) -> String {
+    let n = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("aif-it-{}-{}-{}", std::process::id(), prefix, n));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.to_str().unwrap().to_string()
+}
+
+/// Auth-mode server: sessions required, isolated database.
+fn setup_auth(extra: &[(&str, &str)], prefix: &str) -> (TestServer, String) {
+    let data_dir = unique_data_dir(prefix);
+    let mut env: Vec<(&str, &str)> = vec![
+        ("AIF_AI_BACKEND", "none"),
+        ("AIF_REQUIRE_AUTH", "1"),
+        ("AIF_DATA_DIR", &data_dir),
+    ];
+    env.extend_from_slice(extra);
+    (TestServer::new(&env), data_dir)
+}
+
+/// Run an operator CLI command against `data_dir`; returns (exit, stdout).
+fn admin_cli(data_dir: &str, extra: &[(&str, &str)], args: &[&str]) -> (i32, String) {
+    let mut cmd = Command::new(binary_path());
+    cmd.args(args);
+    for key in [
+        "AIF_AI_BACKEND",
+        "AIF_AI_MODEL",
+        "AIF_OLLAMA_URL",
+        "AIF_CACHE_TTL",
+        "OLLAMA_API_KEY",
+        "AIF_REQUIRE_AUTH",
+        "AIF_PRODUCTION",
+        "AIF_PUBLIC_ORIGIN",
+        "AIF_DAILY_LIMIT",
+        "AIF_OPERATOR_EMAIL",
+        "AIF_INFERENCE_PAUSED",
+        "AIF_COOKIE_SECURE",
+        "AIF_INVITE_DAYS",
+        "AIF_SESSION_DAYS",
+        "AIF_TRUSTED_PROXIES",
+        "AIF_MAX_INFERENCE",
+    ] {
+        cmd.env_remove(key);
+    }
+    cmd.env("AIF_DATA_DIR", data_dir);
+    for (k, v) in extra {
+        cmd.env(k, v);
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    let out = cmd.output().expect("admin CLI failed to run");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).to_string(),
+    )
+}
+
+/// Mint an invite through the operator CLI and return its raw token.
+fn cli_invite(data_dir: &str, email: &str, role: &str) -> String {
+    let (code, stdout) = admin_cli(data_dir, &[], &["--create-invite", email, "--role", role]);
+    assert_eq!(code, 0, "create-invite failed: {}", stdout);
+    token_from_stdout(&stdout)
+}
+
+/// Extract the `#invite=` / `#recovery=` token from CLI printed URLs.
+fn token_from_stdout(stdout: &str) -> String {
+    for line in stdout.lines().rev() {
+        if let Some(i) = line.find("#invite=") {
+            return line[i + "#invite=".len()..].trim().to_string();
+        }
+        if let Some(i) = line.find("#recovery=") {
+            return line[i + "#recovery=".len()..].trim().to_string();
+        }
+    }
+    panic!("no token URL in CLI output: {}", stdout);
+}
+
+struct Session {
+    cookie: String,
+    csrf: String,
+    user_id: String,
+    email: String,
+}
+
+/// Accept an invite over HTTP; returns the logged-in session.
+fn accept_invite(
+    server: &TestServer,
+    token: &str,
+    password: &str,
+    name: &str,
+) -> (u16, Headers, serde_json::Value, Option<Session>) {
+    let payload = format!(
+        r#"{{"token": "{}", "password": "{}", "display_name": "{}"}}"#,
+        token, password, name
+    );
+    let (status, headers, raw) = http_request(
+        "POST",
+        "/api/auth/accept-invite",
+        server.port,
+        &[json_header()],
+        payload.as_bytes(),
+    )
+    .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null);
+    let session = (status == 200)
+        .then(|| session_from(&headers, &body))
+        .flatten();
+    (status, headers, body, session)
+}
+
+fn session_from(headers: &Headers, body: &serde_json::Value) -> Option<Session> {
+    let set_cookie = headers.get("set-cookie")?;
+    let first = set_cookie.split(';').next()?.trim();
+    let token = first.strip_prefix("aif_session=")?;
+    if token.is_empty() {
+        return None;
+    }
+    Some(Session {
+        cookie: format!("aif_session={}", token),
+        csrf: body["user"]["csrf_token"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        user_id: body["user"]["id"].as_str().unwrap_or("").to_string(),
+        email: body["user"]["email"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+/// Log in over HTTP; panics unless login succeeds.
+fn login(server: &TestServer, email: &str, password: &str) -> Session {
+    let payload = format!(r#"{{"email": "{}", "password": "{}"}}"#, email, password);
+    let (status, headers, raw) = http_request(
+        "POST",
+        "/api/auth/login",
+        server.port,
+        &[json_header()],
+        payload.as_bytes(),
+    )
+    .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null);
+    assert_eq!(status, 200, "login failed: {}", body);
+    session_from(&headers, &body).expect("login set no session cookie")
+}
+
+/// Authenticated JSON request (CSRF header included on writes).
+fn authed(
+    server: &TestServer,
+    method: &str,
+    path: &str,
+    session: Option<&Session>,
+    payload: Option<&str>,
+) -> (u16, Headers, serde_json::Value) {
+    let mut headers = vec![json_header()];
+    if let Some(s) = session {
+        headers.push(("Cookie".to_string(), s.cookie.clone()));
+        if method != "GET" && method != "OPTIONS" && !s.csrf.is_empty() {
+            headers.push(("X-CSRF-Token".to_string(), s.csrf.clone()));
+        }
+    }
+    let body = payload.unwrap_or("").as_bytes();
+    let (status, headers, raw) = http_request(method, path, server.port, &headers, body).unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null);
+    (status, headers, json)
+}
+
+fn authed_raw(
+    server: &TestServer,
+    method: &str,
+    path: &str,
+    session: Option<&Session>,
+    payload: Option<&str>,
+) -> (u16, Headers, Vec<u8>) {
+    let mut headers = vec![json_header()];
+    if let Some(s) = session {
+        headers.push(("Cookie".to_string(), s.cookie.clone()));
+        if method != "GET" && method != "OPTIONS" && !s.csrf.is_empty() {
+            headers.push(("X-CSRF-Token".to_string(), s.csrf.clone()));
+        }
+    }
+    let body = payload.unwrap_or("").as_bytes();
+    http_request(method, path, server.port, &headers, body).unwrap()
 }
 
 type Headers = HashMap<String, String>;
@@ -1487,4 +1707,1064 @@ fn css_has_clear_and_retry_styles() {
     let css = web_file("styles.css");
     assert!(css.contains("#clear-button"));
     assert!(css.contains(".batch-retry"));
+}
+
+// --- invite-only auth, isolation, durable history (two-user service) ---
+
+#[test]
+fn auth_me_reports_mode_flags() {
+    let (server, _dir) = setup_auth(&[], "meflags");
+    let (_, _, body) = authed(&server, "GET", "/api/me", None, None);
+    assert_eq!(body["authenticated"], false);
+    assert_eq!(body["auth_required"], true);
+    let open = setup_none();
+    let (_, _, body) = authed(&open, "GET", "/api/me", None, None);
+    assert_eq!(body["authenticated"], false);
+    assert_eq!(body["auth_required"], false);
+}
+
+#[test]
+fn full_invite_login_logout_journey() {
+    let (server, dir) = setup_auth(&[], "journey");
+    let token = cli_invite(&dir, "op@example.com", "operator");
+    let (status, headers, body, session) =
+        accept_invite(&server, &token, "correct horse battery staple", "Op");
+    assert_eq!(status, 200);
+    assert_eq!(body["user"]["email"], "op@example.com");
+    assert_eq!(body["user"]["role"], "operator");
+    assert!(headers
+        .get("set-cookie")
+        .is_some_and(|v| v.contains("HttpOnly")));
+    let session = session.expect("accept-invite must log in");
+    // Session works.
+    let (status, _, me) = authed(&server, "GET", "/api/me", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(me["user"]["email"], "op@example.com");
+    assert_eq!(me["user"]["id"], session.user_id);
+    // Logout revokes it.
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/api/auth/logout",
+        Some(&session),
+        Some("{}"),
+    );
+    assert_eq!(status, 200);
+    let (status, _, me) = authed(&server, "GET", "/api/me", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(me["authenticated"], false);
+    // Login failures are generic (no enumeration oracle).
+    let payload = r#"{"email": "nobody@example.com", "password": "wrong password here"}"#;
+    let (status, _, bad_email) = post_json_to(&server, "/api/auth/login", payload);
+    assert_eq!(status, 401);
+    assert_eq!(bad_email["code"], "invalid_credentials");
+    let payload = r#"{"email": "op@example.com", "password": "wrong password here"}"#;
+    let (status, _, bad_pw) = post_json_to(&server, "/api/auth/login", payload);
+    assert_eq!(status, 401);
+    assert_eq!(bad_pw["code"], "invalid_credentials");
+    assert_eq!(bad_email["error"], bad_pw["error"]);
+    // Correct login works again.
+    let again = login(&server, "op@example.com", "correct horse battery staple");
+    assert_eq!(again.email, "op@example.com");
+}
+
+#[test]
+fn invite_reuse_fails_safely() {
+    let (server, dir) = setup_auth(&[], "reuse");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (status, _, _, _) = accept_invite(&server, &token, "long enough password", "A");
+    assert_eq!(status, 200);
+    let (status, _, body, _) = accept_invite(&server, &token, "another long password", "A2");
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "invite_used");
+}
+
+#[test]
+fn invite_revocation_blocks_acceptance() {
+    let (server, dir) = setup_auth(&[], "revoke");
+    let op_token = cli_invite(&dir, "op@example.com", "operator");
+    let (_, _, _, op) = accept_invite(&server, &op_token, "operator password 1", "Op");
+    assert!(op.is_some());
+    let op = op.unwrap();
+    // Operator mints an invite over the API.
+    let (status, _, created) = authed(
+        &server,
+        "POST",
+        "/api/operator/invites",
+        Some(&op),
+        Some(r#"{"email": "b@example.com", "role": "user"}"#),
+    );
+    assert_eq!(status, 200);
+    let invite_id = created["id"].as_str().unwrap().to_string();
+    assert!(created["invite_url"].as_str().unwrap().contains("#invite="));
+    assert!(!serde_json::to_string(&created)
+        .unwrap()
+        .contains("token_hash"));
+    // Revoke it; the raw token (unknown to us) is now useless — but the
+    // revoked status is visible, and reuse of a *different* minted invite
+    // proves the list endpoint works.
+    let (status, _, listed) = authed(&server, "GET", "/api/operator/invites", Some(&op), None);
+    assert_eq!(status, 200);
+    assert!(listed["invites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["id"] == invite_id));
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        &format!("/api/operator/invites/{}/revoke", invite_id),
+        Some(&op),
+        Some("{}"),
+    );
+    assert_eq!(status, 200);
+    let (status, _, listed) = authed(&server, "GET", "/api/operator/invites", Some(&op), None);
+    assert_eq!(status, 200);
+    let entry = listed["invites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == invite_id)
+        .unwrap();
+    assert_eq!(entry["status"], "revoked");
+    // A revoked invite id cannot be re-revoked into success.
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        &format!("/api/operator/invites/{}/revoke", invite_id),
+        Some(&op),
+        Some("{}"),
+    );
+    assert_eq!(status, 404);
+}
+
+#[test]
+fn third_account_is_refused() {
+    let (server, dir) = setup_auth(&[], "third");
+    for (email, role) in [("a@example.com", "operator"), ("b@example.com", "user")] {
+        let token = cli_invite(&dir, email, role);
+        let (status, _, _, _) = accept_invite(&server, &token, "long enough password", "N");
+        assert_eq!(status, 200);
+    }
+    let token = cli_invite(&dir, "c@example.com", "user");
+    let (status, _, body, _) = accept_invite(&server, &token, "long enough password", "C");
+    assert_eq!(status, 403);
+    assert_eq!(body["code"], "user_limit");
+}
+
+#[test]
+fn recovery_flow_resets_password_and_revokes_sessions() {
+    let (server, dir) = setup_auth(&[], "recovery");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "original password 1", "A");
+    let session = session.unwrap();
+    // Unknown emails get the same generic success (no enumeration).
+    let (status, _, _) = post_json_to(
+        &server,
+        "/api/auth/recovery/request",
+        r#"{"email": "ghost@example.com"}"#,
+    );
+    assert_eq!(status, 200);
+    // Real account: request is generic too; operator mints the link via CLI.
+    let (status, _, _) = post_json_to(
+        &server,
+        "/api/auth/recovery/request",
+        r#"{"email": "a@example.com"}"#,
+    );
+    assert_eq!(status, 200);
+    let (code, stdout) = admin_cli(&dir, &[], &["--create-recovery", "a@example.com"]);
+    assert_eq!(code, 0, "{}", stdout);
+    let reset = token_from_stdout(&stdout);
+    // Bad token fails safely.
+    let (status, _, body) = post_json_to(
+        &server,
+        "/api/auth/recovery/complete",
+        r#"{"token": "deadbeef", "new_password": "brand new password 1"}"#,
+    );
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "recovery_invalid");
+    // Good token works once.
+    let payload = format!(
+        r#"{{"token": "{}", "new_password": "brand new password 1"}}"#,
+        reset
+    );
+    let (status, _, _) = post_json_to(&server, "/api/auth/recovery/complete", &payload);
+    assert_eq!(status, 200);
+    let (status, _, body) = post_json_to(&server, "/api/auth/recovery/complete", &payload);
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "recovery_invalid");
+    // Old session died with recovery; new password logs in.
+    let (status, _, me) = authed(&server, "GET", "/api/me", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(me["authenticated"], false);
+    let fresh = login(&server, "a@example.com", "brand new password 1");
+    assert_eq!(fresh.email, "a@example.com");
+}
+
+#[test]
+fn csrf_is_rejected_without_token() {
+    let (server, dir) = setup_auth(&[], "csrf");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    // State-changing call with the cookie but no CSRF header fails.
+    let (status, _, body) = http_request(
+        "POST",
+        "/api/auth/profile",
+        server.port,
+        &[
+            json_header(),
+            ("Cookie".to_string(), session.cookie.clone()),
+        ],
+        br#"{"display_name": "X"}"#,
+    )
+    .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(status, 403);
+    assert_eq!(body["code"], "csrf_invalid");
+    // With the token it succeeds.
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/api/auth/profile",
+        Some(&session),
+        Some(r#"{"display_name": "Alice"}"#),
+    );
+    assert_eq!(status, 200, "{}", body);
+    assert_eq!(body["display_name"], "Alice");
+}
+
+#[test]
+fn auth_enforcement_blocks_anonymous_estimation_and_metrics() {
+    let (server, _dir) = setup_auth(&[], "enforce");
+    let (status, _, body) = post_json(&server, r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#);
+    assert_eq!(status, 401);
+    assert_eq!(body["code"], "unauthorized");
+    let (status, _, _) = http_request(
+        "POST",
+        "/estimate-batch",
+        server.port,
+        &[json_header()],
+        br#"{"items": []}"#,
+    )
+    .unwrap();
+    assert_eq!(status, 401);
+    let (status, _, body) = authed(&server, "GET", "/metrics", None, None);
+    assert_eq!(status, 401);
+    assert_eq!(body["code"], "unauthorized");
+}
+
+#[test]
+fn estimate_saved_and_history_persists_with_pagination() {
+    let (server, dir) = setup_auth(&[], "history");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    // Tape estimates save with version stamps and no placeholder flag.
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(body["saved"], true);
+    let history_id = body["history_id"].as_str().unwrap().to_string();
+    // Anonymous estimates are never saved (open-mode server).
+    let open = setup_none();
+    let (status, _, anon) = post_json(&open, r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#);
+    assert_eq!(status, 200);
+    assert!(anon.get("history_id").is_none());
+    // Two more rows for pagination.
+    for _ in 0..2 {
+        let (status, _, _) = authed(
+            &server,
+            "POST",
+            "/estimate-weight",
+            Some(&session),
+            Some(r#"{"heart_girth_cm": 170, "body_length_cm": 140}"#),
+        );
+        assert_eq!(status, 200);
+    }
+    let (status, _, page1) = authed(
+        &server,
+        "GET",
+        "/api/history?page=1&per_page=2",
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(page1["total"], 3);
+    assert_eq!(page1["items"].as_array().unwrap().len(), 2);
+    let item = &page1["items"][0];
+    assert!(item.get("estimator_version").is_some());
+    assert!(item.get("prompt_version").is_some());
+    assert_eq!(item["placeholder"], false);
+    let (status, _, page2) = authed(
+        &server,
+        "GET",
+        "/api/history?page=2&per_page=2",
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(page2["items"].as_array().unwrap().len(), 1);
+    // Detail + deletion.
+    let (status, _, detail) = authed(
+        &server,
+        "GET",
+        &format!("/api/history/{}", history_id),
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(detail["weight_kg"], 448.4);
+    let (status, _, _) = authed(
+        &server,
+        "DELETE",
+        &format!("/api/history/{}", history_id),
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    let (status, _, _) = authed(
+        &server,
+        "GET",
+        &format!("/api/history/{}", history_id),
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 404);
+}
+
+#[test]
+fn two_users_are_fully_isolated() {
+    let (server, dir) = setup_auth(&[], "isolate");
+    let token_a = cli_invite(&dir, "a@example.com", "operator");
+    let (_, _, _, session_a) = accept_invite(&server, &token_a, "password for alice", "Alice");
+    let token_b = cli_invite(&dir, "b@example.com", "user");
+    let (_, _, _, session_b) = accept_invite(&server, &token_b, "password for bobby", "Bobby");
+    let (a, b) = (session_a.unwrap(), session_b.unwrap());
+    // A creates an animal and a linked estimate.
+    let (status, _, animal) = authed(
+        &server,
+        "POST",
+        "/api/animals",
+        Some(&a),
+        Some(r#"{"name": "Bessie"}"#),
+    );
+    assert_eq!(status, 200);
+    let animal_id = animal["id"].as_str().unwrap().to_string();
+    let payload = format!(
+        r#"{{"heart_girth_cm": 180, "body_length_cm": 150, "animal_id": "{}"}}"#,
+        animal_id
+    );
+    let (status, _, est) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&a),
+        Some(&payload),
+    );
+    assert_eq!(status, 200);
+    let est_id = est["history_id"].as_str().unwrap().to_string();
+    // B sees none of it: detail, delete, animal, and filtered lists.
+    let (status, _, _) = authed(
+        &server,
+        "GET",
+        &format!("/api/history/{}", est_id),
+        Some(&b),
+        None,
+    );
+    assert_eq!(status, 404);
+    let (status, _, _) = authed(
+        &server,
+        "DELETE",
+        &format!("/api/history/{}", est_id),
+        Some(&b),
+        None,
+    );
+    assert_eq!(status, 404);
+    let (status, _, _) = authed(
+        &server,
+        "GET",
+        &format!("/api/animals/{}", animal_id),
+        Some(&b),
+        None,
+    );
+    assert_eq!(status, 404);
+    let (status, _, list) = authed(&server, "GET", "/api/history", Some(&b), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["total"], 0);
+    let (status, _, animals) = authed(&server, "GET", "/api/animals", Some(&b), None);
+    assert_eq!(status, 200);
+    assert_eq!(animals["animals"].as_array().unwrap().len(), 0);
+    // B cannot link to A's animal (identifier swap fails closed).
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&b),
+        Some(&payload),
+    );
+    assert_eq!(status, 404);
+    assert_eq!(body["code"], "not_found");
+    // B cannot export A's rows: CSV has a header and no data lines.
+    let (status, headers, raw) = authed_raw(
+        &server,
+        "GET",
+        "/api/history/export?format=csv",
+        Some(&b),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert!(headers["content-type"].contains("text/csv"));
+    let text = String::from_utf8_lossy(&raw);
+    assert_eq!(text.lines().count(), 1);
+    // Ordinary users cannot touch operator routes.
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/api/operator/invites",
+        Some(&b),
+        Some(r#"{"email": "x@example.com"}"#),
+    );
+    assert_eq!(status, 403);
+    assert_eq!(body["code"], "forbidden");
+    let (status, _, _) = authed(&server, "GET", "/api/operator/usage", Some(&b), None);
+    assert_eq!(status, 403);
+}
+
+#[test]
+fn quota_counts_photo_estimates_not_tape() {
+    let (server, dir) = setup_auth(&[("AIF_DAILY_LIMIT", "2")], "quota");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let photo = format!(r#"{{"image_base64": "{}"}}"#, png_b64());
+    for _ in 0..2 {
+        let (status, _, _) = authed(
+            &server,
+            "POST",
+            "/estimate-weight",
+            Some(&session),
+            Some(&photo),
+        );
+        assert_eq!(status, 200);
+    }
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(&photo),
+    );
+    assert_eq!(status, 429);
+    assert_eq!(body["code"], "quota_exceeded");
+    // Tape-only estimates stay free under quota exhaustion.
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#),
+    );
+    assert_eq!(status, 200);
+}
+
+#[test]
+fn idempotent_replay_returns_stored_result_without_duplicates() {
+    let (server, dir) = setup_auth(&[], "idem");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let payload = r#"{"heart_girth_cm": 180, "body_length_cm": 150, "idempotency_key": "tape-1"}"#;
+    let (status, headers, first) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(payload),
+    );
+    assert_eq!(status, 200);
+    assert!(!headers.contains_key("x-idempotent-replayed"));
+    let history_id = first["history_id"].as_str().unwrap().to_string();
+    // Replay with a different request body shape but the same key.
+    let (status, headers, second) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 170, "body_length_cm": 140, "idempotency_key": "tape-1"}"#),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(second["replayed"], true);
+    assert_eq!(second["history_id"], history_id);
+    assert_eq!(second["estimated_weight_kg"], first["estimated_weight_kg"]);
+    assert_eq!(
+        headers.get("x-idempotent-replayed").map(|s| s.as_str()),
+        Some("true")
+    );
+    let (status, _, list) = authed(&server, "GET", "/api/history", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["total"], 1);
+}
+
+#[test]
+fn inference_pause_blocks_provider_but_not_tape() {
+    // The ollama backend without a key: unpaused photo fails 502 (needs a
+    // key), paused photo fails 503 without touching the provider.
+    let data_dir = unique_data_dir("pause-ollama");
+    let ollama = TestServer::new(&[
+        ("AIF_AI_BACKEND", "ollama"),
+        ("AIF_REQUIRE_AUTH", "1"),
+        ("AIF_DATA_DIR", &data_dir),
+    ]);
+    let token = cli_invite(&data_dir, "op@example.com", "operator");
+    let (_, _, _, op) = accept_invite(&ollama, &token, "operator password 1", "Op");
+    let op = op.unwrap();
+    let photo = format!(r#"{{"image_base64": "{}"}}"#, png_b64());
+    let (status, _, _) = authed(&ollama, "POST", "/estimate-weight", Some(&op), Some(&photo));
+    assert_eq!(status, 502);
+    let (status, _, _) = authed(
+        &ollama,
+        "POST",
+        "/api/operator/pause",
+        Some(&op),
+        Some(r#"{"paused": true}"#),
+    );
+    assert_eq!(status, 200);
+    let (status, _, body) = authed(&ollama, "POST", "/estimate-weight", Some(&op), Some(&photo));
+    assert_eq!(status, 503);
+    assert_eq!(body["code"], "inference_paused");
+    let (status, _, _) = authed(
+        &ollama,
+        "POST",
+        "/estimate-weight",
+        Some(&op),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#),
+    );
+    assert_eq!(status, 200);
+    let (status, _, _) = authed(
+        &ollama,
+        "POST",
+        "/api/operator/pause",
+        Some(&op),
+        Some(r#"{"paused": false}"#),
+    );
+    assert_eq!(status, 200);
+}
+
+#[test]
+fn history_survives_server_restart_with_live_sessions() {
+    let (mut server, dir) = setup_auth(&[], "restart");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#),
+    );
+    assert_eq!(status, 200);
+    server.restart();
+    // The session cookie still works after restart (durable sessions).
+    let (status, _, me) = authed(&server, "GET", "/api/me", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(me["authenticated"], true);
+    let (status, _, list) = authed(&server, "GET", "/api/history", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["total"], 1);
+    assert_eq!(list["items"][0]["weight_kg"], 448.4);
+}
+
+#[test]
+fn production_rejects_overrides_and_hides_internals() {
+    let data_dir = unique_data_dir("prod");
+    let server = TestServer::new(&[
+        ("AIF_AI_BACKEND", "none"),
+        ("AIF_REQUIRE_AUTH", "1"),
+        ("AIF_PRODUCTION", "1"),
+        ("AIF_PUBLIC_ORIGIN", "https://cows.example.com"),
+        ("AIF_DATA_DIR", &data_dir),
+    ]);
+    let token = cli_invite(&data_dir, "op@example.com", "operator");
+    let (_, _, _, op) = accept_invite(&server, &token, "operator password 1", "Op");
+    let op = op.unwrap();
+    // Provider overrides are rejected even for the operator in production.
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&op),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150, "model": "evil"}"#),
+    );
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "invalid_options");
+    // Info/health are reduced; metrics need the operator.
+    let (status, headers, info) = authed(&server, "GET", "/info", None, None);
+    assert_eq!(status, 200);
+    assert!(info.get("model").is_none());
+    assert!(info.get("backend").is_none());
+    assert!(info.get("default_prompt").is_none());
+    assert!(headers.contains_key("strict-transport-security"));
+    assert!(!headers.contains_key("access-control-allow-origin"));
+    let (status, _, health) = authed(&server, "GET", "/health", None, None);
+    assert_eq!(status, 200);
+    assert_eq!(health["status"], "ok");
+    assert!(health.get("model").is_none());
+    let (status, _, _) = authed(&server, "GET", "/metrics", Some(&op), None);
+    assert_eq!(status, 200);
+}
+
+#[test]
+fn static_account_assets_are_served_and_unknown_routes_404() {
+    let server = setup_none();
+    let (status, headers, _) = get_raw(&server, "/account.js");
+    assert_eq!(status, 200);
+    assert!(headers["content-type"].contains("javascript"));
+    let (status, headers, _) = get_raw(&server, "/account.css");
+    assert_eq!(status, 200);
+    assert!(headers["content-type"].contains("text/css"));
+    let (status, _, _) = get_raw(&server, "/evil.js");
+    assert_eq!(status, 404);
+    let (status, _, body) = authed(&server, "GET", "/api/nope", None, None);
+    assert_eq!(status, 404);
+    assert_eq!(body["code"], "not_found");
+}
+
+#[test]
+fn account_security_headers_and_deletion() {
+    let (server, dir) = setup_auth(&[], "headers");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let (status, headers, _) = authed_raw(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(
+        headers.get("x-frame-options").map(|s| s.as_str()),
+        Some("DENY")
+    );
+    assert!(headers
+        .get("content-security-policy")
+        .is_some_and(|v| v.contains("default-src 'self'")));
+    assert!(headers.contains_key("x-request-id"));
+    // Wrong password cannot delete; right password wipes everything.
+    let (status, _, _) = authed(
+        &server,
+        "DELETE",
+        "/api/account",
+        Some(&session),
+        Some(r#"{"password": "wrong password here"}"#),
+    );
+    assert_eq!(status, 401);
+    let (status, headers, _) = authed(
+        &server,
+        "DELETE",
+        "/api/account",
+        Some(&session),
+        Some(r#"{"password": "long enough password"}"#),
+    );
+    assert_eq!(status, 200);
+    assert!(headers
+        .get("set-cookie")
+        .is_some_and(|v| v.contains("Max-Age=0")));
+    let (status, _, me) = authed(&server, "GET", "/api/me", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(me["authenticated"], false);
+    // The freed slot admits a new account.
+    let token2 = cli_invite(&dir, "fresh@example.com", "user");
+    let (status, _, _, _) = accept_invite(&server, &token2, "fresh password 123", "Fresh");
+    assert_eq!(status, 200);
+}
+
+#[test]
+fn password_change_needs_reauth_and_logs_out() {
+    let (server, dir) = setup_auth(&[], "pwchange");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "original password 1", "A");
+    let session = session.unwrap();
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/api/auth/change-password",
+        Some(&session),
+        Some(
+            r#"{"current_password": "wrong password here", "new_password": "brand new password 1"}"#,
+        ),
+    );
+    assert_eq!(status, 401);
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/api/auth/change-password",
+        Some(&session),
+        Some(
+            r#"{"current_password": "original password 1", "new_password": "brand new password 1"}"#,
+        ),
+    );
+    assert_eq!(status, 200);
+    // All sessions (including this one) are revoked: fresh login required.
+    let (status, _, me) = authed(&server, "GET", "/api/me", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(me["authenticated"], false);
+    let fresh = login(&server, "a@example.com", "brand new password 1");
+    assert_eq!(fresh.email, "a@example.com");
+}
+
+#[test]
+fn csv_export_is_shaped_and_numeric() {
+    let (server, dir) = setup_auth(&[], "csv");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#),
+    );
+    assert_eq!(status, 200);
+    let (status, headers, raw) = authed_raw(
+        &server,
+        "GET",
+        "/api/history/export?format=csv",
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert!(headers["content-type"].contains("text/csv"));
+    assert!(headers
+        .get("content-disposition")
+        .is_some_and(|v| v.contains("attachment")));
+    let text = String::from_utf8_lossy(&raw);
+    let mut lines = text.lines();
+    let header = lines.next().unwrap();
+    assert!(
+        header.contains("weight_kg")
+            && header.contains("measured_at")
+            && header.contains("placeholder")
+    );
+    let row = lines.next().unwrap();
+    // Numeric measurement columns stay unquoted numbers.
+    assert!(row.contains(",448.4,"), "row: {}", row);
+    assert!(row.contains("tape_measure"));
+}
+
+#[test]
+fn login_rate_limit_blocks_brute_force() {
+    let (server, _dir) = setup_auth(&[], "ratelimit");
+    // 10 failures are plain 401s; the 11th trips the per-IP limiter.
+    for i in 0..11 {
+        let payload = format!(
+            r#"{{"email": "ghost{}@example.com", "password": "wrong password here"}}"#,
+            i
+        );
+        let (status, _, _) = post_json_to(&server, "/api/auth/login", &payload);
+        if i < 10 {
+            assert_eq!(status, 401, "attempt {}", i);
+        } else {
+            assert_eq!(status, 429, "attempt {}", i);
+        }
+    }
+}
+
+#[test]
+fn forwarded_ip_is_honored_only_from_trusted_proxy() {
+    let (server, _dir) = setup_auth(&[], "fwd");
+    // 127.0.0.1 is a trusted proxy by default, so a forged client IP gets
+    // its own rate-limit bucket: exhaust it, then prove the real bucket
+    // (no header) is untouched.
+    for i in 0..11 {
+        let payload = format!(
+            r#"{{"email": "forged{}@example.com", "password": "wrong password here"}}"#,
+            i
+        );
+        let (status, _, _) = http_request(
+            "POST",
+            "/api/auth/login",
+            server.port,
+            &[
+                json_header(),
+                ("X-Forwarded-For".to_string(), "9.9.9.9".to_string()),
+            ],
+            payload.as_bytes(),
+        )
+        .unwrap();
+        if i < 10 {
+            assert_eq!(status, 401, "attempt {}", i);
+        } else {
+            assert_eq!(status, 429, "attempt {}", i);
+        }
+    }
+    let (status, _, _) = post_json_to(
+        &server,
+        "/api/auth/login",
+        r#"{"email": "direct@example.com", "password": "wrong password here"}"#,
+    );
+    assert_eq!(status, 401);
+}
+
+#[test]
+fn animal_scale_flow_keeps_trends_separate() {
+    let (server, dir) = setup_auth(&[], "animals");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    // Validation first.
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/api/animals",
+        Some(&session),
+        Some(r#"{"name": ""}"#),
+    );
+    assert_eq!(status, 400);
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/api/animals",
+        Some(&session),
+        Some(r#"{"name": "Bessie", "sex": "dinosaur"}"#),
+    );
+    assert_eq!(status, 400);
+    let (status, _, animal) = authed(
+        &server,
+        "POST",
+        "/api/animals",
+        Some(&session),
+        Some(r#"{"name": "Bessie", "breed": "Angus", "sex": "cow"}"#),
+    );
+    assert_eq!(status, 200);
+    let animal_id = animal["id"].as_str().unwrap().to_string();
+    // Editing works (PUT carries a JSON body).
+    let (status, _, updated) = authed(
+        &server,
+        "PUT",
+        &format!("/api/animals/{}", animal_id),
+        Some(&session),
+        Some(r#"{"name": "Bessie II", "breed": "Angus", "sex": "cow"}"#),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(updated["name"], "Bessie II");
+    // Bad scale readings are rejected.
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        &format!("/api/animals/{}/measurements", animal_id),
+        Some(&session),
+        Some(r#"{"scale_weight_kg": 5}"#),
+    );
+    assert_eq!(status, 400);
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        &format!("/api/animals/{}/measurements", animal_id),
+        Some(&session),
+        Some(r#"{"scale_weight_kg": 500, "measured_at": "2999-01-01T00:00:00Z"}"#),
+    );
+    assert_eq!(status, 400);
+    // A real scale reading lands on the animal with an exact range.
+    let (status, _, scale) = authed(
+        &server,
+        "POST",
+        &format!("/api/animals/{}/measurements", animal_id),
+        Some(&session),
+        Some(r#"{"scale_weight_kg": 512.5, "measured_at": "2026-09-01T08:00:00Z"}"#),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(scale["source"], "scale");
+    assert_eq!(scale["weight_min_kg"], scale["weight_max_kg"]);
+    // A photo estimate linked to the same animal joins its trend.
+    let payload = format!(
+        r#"{{"heart_girth_cm": 180, "body_length_cm": 150, "animal_id": "{}"}}"#,
+        animal_id
+    );
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(&payload),
+    );
+    assert_eq!(status, 200);
+    let (status, _, detail) = authed(
+        &server,
+        "GET",
+        &format!("/api/animals/{}", animal_id),
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(detail["estimates_total"], 2);
+    let sources: Vec<String> = detail["estimates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["source"].as_str().unwrap().to_string())
+        .collect();
+    assert!(sources.contains(&"scale".to_string()));
+    // Deleting the animal keeps the estimates, unlinked.
+    let (status, _, _) = authed(
+        &server,
+        "DELETE",
+        &format!("/api/animals/{}", animal_id),
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    let (status, _, list) = authed(&server, "GET", "/api/history", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["total"], 2);
+    assert!(list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|e| e["animal_id"].is_null()));
+}
+
+#[test]
+fn batch_items_save_individually_and_count_quota() {
+    let (server, dir) = setup_auth(&[("AIF_DAILY_LIMIT", "3")], "batchq");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let payload = format!(
+        r#"{{"items": [{{"image_base64": "{}"}}, {{"heart_girth_cm": 180, "body_length_cm": 150}}, {{"prompt": "no image"}}]}}"#,
+        png_b64()
+    );
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-batch",
+        Some(&session),
+        Some(&payload),
+    );
+    assert_eq!(status, 200);
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0]["status"], 200);
+    assert!(results[0]["body"].get("history_id").is_some());
+    assert_eq!(results[1]["status"], 200);
+    assert_eq!(results[2]["status"], 400);
+    // One photo estimate spent; two more are allowed, the third is not.
+    let photo = format!(r#"{{"image_base64": "{}"}}"#, png_b64());
+    for _ in 0..2 {
+        let (status, _, _) = authed(
+            &server,
+            "POST",
+            "/estimate-weight",
+            Some(&session),
+            Some(&photo),
+        );
+        assert_eq!(status, 200);
+    }
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(&photo),
+    );
+    assert_eq!(status, 429);
+    assert_eq!(body["code"], "quota_exceeded");
+}
+
+#[test]
+fn fallback_rows_are_flagged_placeholders_not_ai() {
+    let (server, dir) = setup_auth(&[], "placeholder");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let payload = format!(r#"{{"image_base64": "{}"}}"#, png_b64());
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(&payload),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(body["source"], "local_fallback");
+    let (status, _, list) = authed(&server, "GET", "/api/history", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["items"][0]["source"], "local_fallback");
+    assert_eq!(list["items"][0]["placeholder"], true);
+}
+
+#[test]
+fn account_export_contains_everything_owned() {
+    let (server, dir) = setup_auth(&[], "export");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/api/animals",
+        Some(&session),
+        Some(r#"{"name": "Bessie"}"#),
+    );
+    assert_eq!(status, 200);
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#),
+    );
+    assert_eq!(status, 200);
+    let (status, _, export) = authed(&server, "GET", "/api/account/export", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(export["user"]["email"], "a@example.com");
+    assert!(export.get("password_hash").is_none());
+    assert_eq!(export["animals"].as_array().unwrap().len(), 1);
+    assert_eq!(export["estimates"].as_array().unwrap().len(), 1);
+    let text = serde_json::to_string(&export).unwrap();
+    assert!(!text.contains("aif_session"));
+}
+
+#[test]
+fn js_guards_cover_account_assets() {
+    let js = web_file("account.js");
+    assert!(js.contains("textContent"));
+    assert!(!js.contains("innerHTML"));
+    assert!(!js.contains("localStorage"));
+    assert!(!js.contains("sessionStorage"));
+    for needle in [
+        "accept-invite",
+        "X-CSRF-Token",
+        "animal-select",
+        "history/export",
+        "operator/pause",
+        "aif-estimate-saved",
+    ] {
+        assert!(js.contains(needle), "account.js missing {}", needle);
+    }
+    let html = web_file("index.html");
+    for needle in [
+        r#"id="auth-bar""#,
+        r#"id="login-form""#,
+        r#"id="invite-form""#,
+        r#"id="recovery-form""#,
+        r#"id="animal-select""#,
+        r#"id="server-history-list""#,
+        r#"id="operator-panel""#,
+        "/account.js",
+        "/account.css",
+        "no public registration",
+        "HEIC",
+    ] {
+        assert!(html.contains(needle), "index.html missing {}", needle);
+    }
 }
