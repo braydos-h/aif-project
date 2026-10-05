@@ -107,7 +107,11 @@ pub fn summarize(triples: &[(String, f64, f64)]) -> MethodMetrics {
             continue;
         }
         let err = (estimate - scale).abs();
-        let pct = if *scale > 0.0 { err / scale * 100.0 } else { 0.0 };
+        let pct = if *scale > 0.0 {
+            err / scale * 100.0
+        } else {
+            0.0
+        };
         n += 1;
         abs_sum += err;
         pct_sum += pct;
@@ -154,7 +158,9 @@ pub fn evaluation_rows(dataset: &Dataset) -> Vec<&ReferenceRow> {
     dataset
         .rows
         .iter()
-        .filter(|r| r.split == "evaluation" && r.scale_weight_kg.is_finite() && r.scale_weight_kg > 0.0)
+        .filter(|r| {
+            r.split == "evaluation" && r.scale_weight_kg.is_finite() && r.scale_weight_kg > 0.0
+        })
         .collect()
 }
 
@@ -168,13 +174,14 @@ pub fn validate_dataset(dataset: &Dataset) -> Result<(), String> {
         if row.id.is_empty() || row.id.len() > 64 {
             return Err(format!("row has a bad id: {:?}", row.id));
         }
-        if !row.scale_weight_kg.is_finite()
-            || !(20.0..=2500.0).contains(&row.scale_weight_kg)
-        {
+        if !row.scale_weight_kg.is_finite() || !(20.0..=2500.0).contains(&row.scale_weight_kg) {
             return Err(format!("row {} has an implausible scale weight", row.id));
         }
         if row.split != "evaluation" && row.split != "calibration" {
-            return Err(format!("row {} has an unknown split {:?}", row.id, row.split));
+            return Err(format!(
+                "row {} has an unknown split {:?}",
+                row.id, row.split
+            ));
         }
         for (label, value) in [
             ("heart_girth_cm", row.heart_girth_cm),

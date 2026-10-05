@@ -198,7 +198,8 @@ fn run_photo(config: &Config, cache: &Cache, image_b64: &str) -> Result<(f64, bo
             .unwrap_or(f64::NAN);
         return Ok((weight, true));
     }
-    match aif_backend::ollama::estimate_via_ollama(config, cache, image_b64, config::DEFAULT_PROMPT) {
+    match aif_backend::ollama::estimate_via_ollama(config, cache, image_b64, config::DEFAULT_PROMPT)
+    {
         Ok(value) => Ok((
             value
                 .get("estimated_weight_kg")
