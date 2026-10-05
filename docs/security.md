@@ -58,6 +58,13 @@
 | `AIF_MAX_INFERENCE` | `4` | Concurrent provider inferences, 1–64 |
 | `AIF_INFERENCE_PAUSED` | `0` | Start with provider inference paused |
 | `AIF_TRUSTED_PROXIES` | `127.0.0.1,::1` | Peers allowed to supply `X-Forwarded-For` |
+| `AIF_RETAIN_PHOTOS` | `0` | `1` enables opt-in private photo retention |
+| `AIF_PHOTO_TTL_DAYS` | `30` | Retained photo lifetime in days (1–365) |
+| `AIF_PHOTO_QUOTA_MB` | `50` | Retained photo quota per user in MiB (1–1024) |
+| `AIF_JOBS_ENABLED` | `1` | Durable background estimate jobs |
+| `AIF_JOB_WORKER` | `1` | Run the background worker in this process (`0` to disable) |
+| `AIF_JOB_TTL_HOURS` | `72` | Completed-job retention in hours (1–720) |
+| `AIF_DISK_ALERT_MB` | `1024` | Operator alert threshold for data-dir size in MiB |
 | `AIF_OPERATOR_EMAIL` | empty | First-run bootstrap: mint an operator invite when the DB is empty |
 | `AIF_BACKUP_PASSPHRASE` | empty | Backup encryption passphrase (env only, never a file) |
 
@@ -77,11 +84,12 @@ header. Codes: `missing_body`, `bad_request`, `invalid_json`,
   migrations, encrypted snapshot backups.
 - **Argon2id + random 256-bit tokens** via maintained crates; no custom
   crypto; token hashes only in the DB.
-- **Transient-only photos**: uploaded bytes are sent to the provider for
-  the estimate and never written to disk or the database.
-- **No durable job queue**: estimates are synchronous with idempotency
-  keys (replay returns the stored result); batch items isolate failures.
-  Restart cannot corrupt or duplicate results (verified by tests).
+- **Transient-only photos by default**; optional opt-in retention
+  (`AIF_RETAIN_PHOTOS=1`) stores metadata-stripped bytes under opaque ids
+  with owner-only downloads, quotas, TTL expiry, and sweep cleanup.
+- **Durable job queue for background estimates**: FIFO worker, bounded
+  backoff retries, cancel/expire/prune lifecycle, restart requeue with
+  idempotent exactly-once history saves.
 - **Custom HTTP stack kept**: audited framing/timeouts/limits/proxy
   behavior meet the production bar; migrating would churn the tested
   contract for no security gain.

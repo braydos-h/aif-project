@@ -23,8 +23,9 @@ password change, pause, exports, deletions) are appended to the audit log
 | Signal | How |
 | --- | --- |
 | Uptime | External check on `https://<domain>/health` (expects `{"status":"ok"}`); systemd `Restart=on-failure` + `journalctl -u aif-backend`. |
-| Provider failures | `journalctl` for `estimation failed`; operator `/api/operator/usage` and audit. |
-| Disk capacity | Alert on `/var/lib/aif` and `/var/backups/aif` (photos are transient; growth is DB rows only). |
+| Provider failures | `journalctl` for `estimation failed`; operator `/api/operator/usage` and audit; `provider_errors` alert in `/api/operator/status` at 5+/hour. |
+| Usage spikes | `usage_high` alert in `/api/operator/status` at 80% of `AIF_DAILY_LIMIT`; shown in the operator panel. |
+| Disk capacity | Alert on `/var/lib/aif` and `/var/backups/aif` (`disk_high` alert in status past `AIF_DISK_ALERT_MB`; DB rows plus any retained photos under `<data_dir>/photos`). |
 | Certificate expiry | Caddy renews automatically; the `email` in the Caddyfile gets expiry alerts. Verify with `curl -vI https://<domain>`. |
 | Provider spending | `AIF_DAILY_LIMIT` per user + `AIF_MAX_INFERENCE` concurrency + bounded single retry; pause inference from the operator panel (`POST /api/operator/pause`). Unexpected traffic answers 429/503, never unbounded inference. |
 
@@ -41,9 +42,12 @@ reminder to copy the file **off-server** (scp/rsync to encrypted
 storage). Local copies do not survive host loss. Photo backups are
 unneeded: the service stores no photos.
 
-Retention: 14 daily encrypted copies off-server; account deletion
-removes rows from active storage immediately, while already-shipped
-backup copies age out within the 14-day window (see `docs/privacy.md`).
+Retention: 14 daily encrypted copies off-server (database only —
+retained photos in `<data_dir>/photos` are excluded; back that dir up
+separately under the same rotation if retention is enabled); account
+deletion removes rows from active storage immediately, while
+already-shipped backup copies age out within the 14-day window (see
+`docs/privacy.md`).
 
 ## Restore drill (required before launch, repeat yearly)
 

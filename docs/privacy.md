@@ -11,12 +11,32 @@ Two invited users. No public registration, no tracking, no analytics.
 | Sessions | SQLite `sessions` | Random token hashes + CSRF tokens; HttpOnly cookies; expiry + revocation. |
 | Animals | SQLite `animals` | Owned by one account; never shared between the two users. |
 | Estimates | SQLite `estimates` | Value, range, source/method, model/provider, estimator + prompt versions, tape inputs, animal hints, timestamps, placeholder flag. **No photos, no raw model dumps, no API keys.** |
+| Retained photos (only with `AIF_RETAIN_PHOTOS=1` + per-estimate opt-in) | `<data_dir>/photos/<opaque-id>` + `photos` rows | Metadata-stripped bytes, owner + optional estimate link, expiry, size/MIME. Private: never in backups, never shared. |
 | Usage counters, audit log | SQLite | Counts per day; audit entries exclude secrets/tokens/prompts/images. |
 
-## What is NOT stored
+## What is NOT stored by default
 
-- Uploaded photographs (transient-only: decoded, validated, sent to the
-  AI provider for the estimate, then dropped — never written to disk).
+- Uploaded photographs (transient-only unless retention is enabled:
+  decoded, validated, sent to the AI provider for the estimate, then
+  dropped — never written to disk).
+
+## Optional photo retention (`AIF_RETAIN_PHOTOS=1`)
+
+Off by default. When the operator enables it, a logged-in estimate with
+`retain_photo: true` stores the processed photo:
+
+- opaque 32-hex server id under `<data_dir>/photos/` (0600), never a
+  user-derived path; download (`GET /api/photos/{id}`) is owner-only
+  with `Cache-Control: private` and no CORS sharing;
+- JPEG APP1/Exif and PNG eXIf segments stripped (no location metadata);
+- per-user quota (`AIF_PHOTO_QUOTA_MB`, default 50 MiB) and lifetime
+  (`AIF_PHOTO_TTL_DAYS`, default 30 days); expiry and orphans swept at
+  startup and periodically;
+- deleting a history row deletes its linked photos; deleting an account
+  deletes all of its photos (rows cascade, files removed explicitly);
+- retained photos are **excluded from database backups**; the photo dir
+  is covered only if the operator backs it up separately (document the
+  same 14-day rotation if you do).
 - API keys, passwords, session tokens, invite/reset tokens (hashes only).
 - Base64 images in browser storage (the WebUI uses no `localStorage`).
 
@@ -34,8 +54,9 @@ measurements.
 - Server logs: request ids, errors, cache/connection counters. No photos,
   credentials, prompts, or tokens.
 - Active storage: your rows live until you delete them (history rows,
-  animals) or delete your account (everything, sessions revoked, in one
-  transaction).
+  animals, retained photos) or delete your account (everything, sessions
+  revoked, in one transaction). Retained photos additionally expire
+  automatically after `AIF_PHOTO_TTL_DAYS`.
 - Backups: 14 daily encrypted off-server copies; deleted data ages out
   as backups rotate (worst case 14 days). There is no longer-lived copy
   by design.

@@ -129,6 +129,13 @@ and the tests are all Rust (plus plain browser HTML/CSS/JavaScript).
 | `GET` | `/api/account` | Profile summary, usage, photo policy |
 | `GET` | `/api/account/export` | Full owned-data JSON export |
 | `DELETE` | `/api/account` | Password-confirmed self-deletion (revokes all sessions) |
+| `GET` | `/api/photos` | List retained photo metadata (retention must be enabled) |
+| `GET` | `/api/photos/{id}` | Owner-only private download |
+| `DELETE` | `/api/photos/{id}` | Owner-only photo deletion |
+| `POST` | `/api/jobs` | Queue a background estimate (202; same payload as `/estimate-weight`) |
+| `GET` | `/api/jobs` | List your jobs, newest first |
+| `GET` | `/api/jobs/{id}` | Job status + result when successful (others' ids 404) |
+| `POST` | `/api/jobs/{id}/cancel` | Cancel a queued job |
 | `POST` | `/api/operator/invites` | Mint an invite (operator; one-time link in response) |
 | `GET` | `/api/operator/invites` | Invite list with status |
 | `POST` | `/api/operator/invites/{id}/revoke` | Revoke an unused invite |
@@ -158,6 +165,17 @@ inputs: `animal_id` (must be an owned animal, else 404), `measured_at`
 (1–128 chars; replays return the stored result with `replayed: true` and
 `X-Idempotent-Replayed: true` instead of spending inference again).
 Successful saves add `history_id` and `saved: true` to the response.
+With `AIF_RETAIN_PHOTOS=1`, photo estimates also accept
+`retain_photo: true` to store the processed photo privately (response
+carries `photo_id`, or `photo_error` when storage fails); anonymous
+callers get `400 invalid_options` for retention.
+
+`POST /api/jobs` accepts any single-estimate payload and queues it for
+the background worker (202 `{id, status}`); poll `GET /api/jobs/{id}`
+until `success` (result embedded) or `failed` (`error_code` set).
+Transient 429/502/503 outcomes retry with bounded backoff (3 attempts);
+only queued jobs can be cancelled. A restart requeues interrupted jobs
+and idempotency guarantees each completed result is saved once.
 
 ### `POST /estimate-weight`
 
@@ -319,6 +337,13 @@ are already set take precedence over `.env`.
 | `AIF_MAX_INFERENCE` | `4` | Concurrent provider inferences (1–64) |
 | `AIF_INFERENCE_PAUSED` | `0` | Start with provider inference paused |
 | `AIF_TRUSTED_PROXIES` | `127.0.0.1,::1` | Peers allowed to supply `X-Forwarded-For` |
+| `AIF_RETAIN_PHOTOS` | `0` | `1` enables opt-in private photo retention |
+| `AIF_PHOTO_TTL_DAYS` | `30` | Retained photo lifetime in days (1–365) |
+| `AIF_PHOTO_QUOTA_MB` | `50` | Retained photo quota per user in MiB (1–1024) |
+| `AIF_JOBS_ENABLED` | `1` | Durable background estimate jobs |
+| `AIF_JOB_WORKER` | `1` | Run the background worker in this process (`0` to disable) |
+| `AIF_JOB_TTL_HOURS` | `72` | Completed-job retention in hours (1–720) |
+| `AIF_DISK_ALERT_MB` | `1024` | Operator alert threshold for data-dir size in MiB |
 
 Ollama Cloud requires an API key. The `none` backend makes a deterministic
 SHA-256-derived estimate in the range 250–900 kg and performs no network
