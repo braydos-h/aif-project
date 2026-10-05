@@ -5,12 +5,16 @@
 //! retry-with-backoff — same API contract, no async runtime.
 
 pub mod args;
+pub mod auth;
 pub mod cache;
 pub mod config;
+pub mod db;
 pub mod fallback;
 pub mod hash;
 pub mod http;
+pub mod limits;
 pub mod ollama;
 pub mod parse;
 pub mod tape;
+pub mod time_util;
 pub mod validate;
