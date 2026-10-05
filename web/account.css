@@ -1,1 +1,129 @@
-/* Account, history, and animal-record styles. Loaded alongside styles.css. */
+/* Account, history, animal, and operator styles. Plain CSS, no dependencies.
+   Reuses the theme variables from styles.css; readable in dark mode. */
+
+#auth-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 4px;
+}
+
+#auth-bar .spacer { flex: 1; }
+
+.auth-link {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+}
+
+.auth-user { color: var(--muted); overflow-wrap: anywhere; }
+
+.auth-view { display: grid; gap: 8px; }
+.auth-view[hidden] { display: none; }
+
+.auth-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.auth-card label { display: grid; gap: 4px; }
+
+.auth-card input[type="email"],
+.auth-card input[type="password"],
+.auth-card input[type="text"],
+.auth-card input[type="number"],
+.auth-card select,
+.auth-card textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.auth-card textarea { min-height: 88px; resize: vertical; }
+
+.auth-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.secondary-btn {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.danger-btn {
+  background: var(--surface);
+  color: #b3261e;
+  border: 1px solid #b3261e;
+}
+
+#account-status { color: var(--muted); min-height: 1.5em; margin: 0; }
+
+#server-history-list,
+#animal-list,
+#invite-list,
+#user-list,
+#usage-list,
+#audit-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+#server-history-list li,
+#animal-list li,
+#invite-list li,
+#user-list li,
+#usage-list li,
+#audit-list li {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.small-meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pager { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.pager .secondary-btn { min-height: 44px; }
+
+table.plain { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+
+table.plain th,
+table.plain td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-color-scheme: dark) {
+  .danger-btn { color: #ff8a80; border-color: #ff8a80; }
+  input[aria-invalid="true"] { border-color: #ff8a80; }
+}

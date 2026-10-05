@@ -7,18 +7,22 @@
   <meta name="color-scheme" content="light dark">
   <title>Cow Weight Estimator</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/account.css">
   <script src="/app.js" defer></script>
+  <script src="/account.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#estimate-button">Skip to estimator</a>
   <main>
     <h1>Cow Weight Estimator</h1>
     <p class="note">Upload cow photos to get a weight estimate. Use a verified scale for purchase, dosing, or official records.</p>
+    <nav id="auth-bar" aria-label="Account"></nav>
     <p class="note" role="status">Status: <span id="health-pill">Checking backend…</span> <span id="backend-label"></span></p>
 
+    <div class="auth-view" data-view="estimator">
     <label for="image-input">Choose images</label>
     <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple capture="environment" aria-describedby="limits-hint status">
-    <p id="limits-hint" class="note">JPEG, PNG, WebP, BMP, or GIF, 20 MB or less per file. Large photos are resized in your browser to upload faster. Files stay on this device until you press Estimate. You can also drag and drop files anywhere on this page or paste images from the clipboard.</p>
+    <p id="limits-hint" class="note">JPEG, PNG, WebP, BMP, or GIF, 20 MB or less per file. HEIC photos are not supported — export them as JPEG first. Large photos are resized in your browser to upload faster. Files stay on this device until you press Estimate. You can also drag and drop files anywhere on this page or paste images from the clipboard.</p>
     <ul id="file-list" hidden aria-label="Selected files"></ul>
     <button id="estimate-button" type="button">Estimate Weight</button>
     <button id="cancel-button" type="button" hidden>Cancel</button>
@@ -60,6 +64,13 @@
     <section aria-labelledby="profile-heading">
       <h2 id="profile-heading">Animal details (optional)</h2>
       <p class="note">Breed, sex, and age ride along with photo and demo estimates for the AI backend. Tape-only and offline placeholder results are formula-based and unaffected by these hints. Leave blank to skip.</p>
+      <div>
+        <label for="animal-select">Link to an animal record</label>
+        <select id="animal-select" aria-describedby="profile-status">
+          <option value="">No animal — do not link</option>
+        </select>
+        <p class="note">Logged-in users can link an estimate to one of their animals so trends never mix unrelated cows. <a href="#account">Manage animals in Account</a>.</p>
+      </div>
       <div class="profile-row">
         <div>
           <label for="breed-input">Breed</label>
@@ -112,6 +123,244 @@
         <button id="history-clear" type="button" hidden>Clear history</button>
       </div>
     </section>
+    </div><!-- /estimator view -->
+
+    <p id="account-status" class="note" role="status" aria-live="polite"></p>
+
+    <div class="auth-view" data-view="login" hidden>
+      <section aria-labelledby="login-heading">
+        <h2 id="login-heading">Log in</h2>
+        <p class="note">Accounts require an invitation from the operator. There is no public registration.</p>
+        <form id="login-form" class="auth-card">
+          <label for="login-email">Email
+            <input id="login-email" name="email" type="email" autocomplete="username" required>
+          </label>
+          <label for="login-password">Password
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <div class="auth-row">
+            <button type="submit">Log in</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="auth-view" data-view="invite" hidden>
+      <section aria-labelledby="invite-heading">
+        <h2 id="invite-heading">Accept your invitation</h2>
+        <p class="note">Invitation links are single-use and expire. Paste the token from your invite link if it was not filled in automatically.</p>
+        <form id="invite-form" class="auth-card">
+          <label for="invite-token">Invitation token
+            <input id="invite-token" name="token" type="text" autocomplete="off" required>
+          </label>
+          <label for="invite-name">Display name
+            <input id="invite-name" name="display-name" type="text" autocomplete="nickname" maxlength="64">
+          </label>
+          <label for="invite-password">Choose a password (10+ characters)
+            <input id="invite-password" name="password" type="password" autocomplete="new-password" required>
+          </label>
+          <div class="auth-row">
+            <button type="submit">Activate account</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="auth-view" data-view="recovery" hidden>
+      <section aria-labelledby="recovery-heading">
+        <h2 id="recovery-heading">Recover access</h2>
+        <p class="note">Enter your account email. If it has an account, the operator will relay a single-use recovery link to you over a private channel.</p>
+        <form id="recovery-form" class="auth-card">
+          <label for="recovery-email">Email
+            <input id="recovery-email" name="email" type="email" autocomplete="username" required>
+          </label>
+          <div class="auth-row">
+            <button type="submit">Request recovery</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="auth-view" data-view="recovery-complete" hidden>
+      <section aria-labelledby="recovery-complete-heading">
+        <h2 id="recovery-complete-heading">Choose a new password</h2>
+        <form id="recovery-complete-form" class="auth-card">
+          <label for="recovery-token">Recovery token
+            <input id="recovery-token" name="token" type="text" autocomplete="off" required>
+          </label>
+          <label for="recovery-password">New password (10+ characters)
+            <input id="recovery-password" name="password" type="password" autocomplete="new-password" required>
+          </label>
+          <div class="auth-row">
+            <button type="submit">Update password</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="auth-view" data-view="account" hidden>
+      <section aria-labelledby="account-heading">
+        <h2 id="account-heading">Account</h2>
+        <div id="account-summary" aria-live="polite"></div>
+        <h3>Profile</h3>
+        <form id="profile-form" class="auth-card">
+          <label for="profile-name">Display name
+            <input id="profile-name" name="display-name" type="text" autocomplete="nickname" maxlength="64">
+          </label>
+          <div class="auth-row">
+            <button type="submit">Save name</button>
+          </div>
+        </form>
+        <h3>Change password</h3>
+        <form id="password-form" class="auth-card">
+          <label for="password-current">Current password
+            <input id="password-current" name="current" type="password" autocomplete="current-password" required>
+          </label>
+          <label for="password-new">New password (10+ characters)
+            <input id="password-new" name="new" type="password" autocomplete="new-password" required>
+          </label>
+          <div class="auth-row">
+            <button type="submit">Change password</button>
+          </div>
+          <p class="note">Changing your password logs you out everywhere.</p>
+        </form>
+        <h3>Your animals</h3>
+        <p class="note">Link estimates to an animal so trends never mix unrelated cows.</p>
+        <ul id="animal-list" aria-label="Your animals"></ul>
+        <p id="animal-empty" class="note">No animals yet.</p>
+        <div class="auth-row">
+          <button id="animal-new" type="button" class="secondary-btn">Add an animal</button>
+        </div>
+        <h3 id="animal-form-title">Add an animal</h3>
+        <form id="animal-form" class="auth-card">
+          <input id="animal-id" type="hidden" value="">
+          <label for="animal-name">Name
+            <input id="animal-name" type="text" maxlength="64" required>
+          </label>
+          <label for="animal-breed">Breed
+            <input id="animal-breed" type="text" maxlength="64" autocomplete="off">
+          </label>
+          <label for="animal-sex">Sex
+            <select id="animal-sex">
+              <option value="">Unknown</option>
+              <option value="cow">Cow</option>
+              <option value="bull">Bull</option>
+              <option value="steer">Steer</option>
+              <option value="heifer">Heifer</option>
+              <option value="calf">Calf</option>
+            </select>
+          </label>
+          <label for="animal-year">Birth year
+            <input id="animal-year" type="number" min="1900" max="2100" step="1" inputmode="numeric">
+          </label>
+          <label for="animal-notes">Notes
+            <textarea id="animal-notes" maxlength="500"></textarea>
+          </label>
+          <label for="animal-archived">
+            <input id="animal-archived" type="checkbox"> Archived
+          </label>
+          <div class="auth-row">
+            <button type="submit">Save animal</button>
+          </div>
+        </form>
+        <h3>Record a scale weight</h3>
+        <p class="note">Verified scale readings are stored as measurements (source “scale”), separate from AI guesses.</p>
+        <form id="scale-form" class="auth-card">
+          <label for="scale-weight">Scale weight (kg, 20–2500)
+            <input id="scale-weight" type="number" min="20" max="2500" step="0.1" inputmode="decimal">
+          </label>
+          <label for="scale-when">Measured at (optional, UTC)
+            <input id="scale-when" type="text" inputmode="numeric" placeholder="e.g. 2026-10-01T08:00:00Z" autocomplete="off">
+          </label>
+          <div class="auth-row">
+            <button type="submit">Record scale weight</button>
+          </div>
+          <p class="note">Edit an animal (or open its trend) first so the reading lands on the right animal.</p>
+        </form>
+        <h3>Saved history</h3>
+        <p class="note">Your private server-side history. Dates show in your timezone; the server stores UTC.</p>
+        <form id="history-filter-form" class="auth-card">
+          <label for="history-filter-source">Source
+            <select id="history-filter-source">
+              <option value="">All sources</option>
+              <option value="ollama">AI estimate</option>
+              <option value="tape_measure">Tape measure</option>
+              <option value="local_fallback">Offline placeholder</option>
+              <option value="scale">Scale measurement</option>
+            </select>
+          </label>
+          <label for="history-filter-animal">Animal
+            <select id="history-filter-animal">
+              <option value="">All animals</option>
+            </select>
+          </label>
+          <div class="auth-row">
+            <button type="submit">Apply filters</button>
+          </div>
+        </form>
+        <p id="server-history-count" class="note" aria-live="polite"></p>
+        <ul id="server-history-list" aria-label="Saved estimates"></ul>
+        <p id="server-history-empty" class="note">No saved estimates yet — run an estimate while logged in.</p>
+        <div id="server-history-pager" class="pager"></div>
+        <div class="auth-row">
+          <button id="history-export-server" type="button" class="secondary-btn">Export history CSV</button>
+        </div>
+        <h3>Your data</h3>
+        <div class="auth-row">
+          <button id="account-export" type="button" class="secondary-btn">Export all my data (JSON)</button>
+        </div>
+        <h3>Delete account</h3>
+        <p class="note">Deletes your profile, animals, history, and usage, and logs you out everywhere. Backups expire under the documented retention policy.</p>
+        <form id="delete-form" class="auth-card">
+          <label for="delete-password">Confirm with your password
+            <input id="delete-password" type="password" autocomplete="current-password" required>
+          </label>
+          <label for="delete-confirm">
+            <input id="delete-confirm" type="checkbox"> I understand this permanently deletes my data
+          </label>
+          <div class="auth-row">
+            <button type="submit" class="danger-btn">Delete my account</button>
+          </div>
+        </form>
+        <section id="operator-panel" aria-labelledby="operator-heading" hidden>
+          <h3 id="operator-heading">Operator</h3>
+          <h4>Create an invite</h4>
+          <form id="invite-create-form" class="auth-card">
+            <label for="invite-email">Recipient email
+              <input id="invite-email" type="email" autocomplete="off" required>
+            </label>
+            <label for="invite-role">Role
+              <select id="invite-role">
+                <option value="user">User</option>
+                <option value="operator">Operator</option>
+              </select>
+            </label>
+            <div class="auth-row">
+              <button type="submit">Create invite</button>
+            </div>
+          </form>
+          <div id="invite-output" aria-live="polite"></div>
+          <h4>Invites</h4>
+          <ul id="invite-list" aria-label="Invites"></ul>
+          <h4>Accounts</h4>
+          <ul id="user-list" aria-label="Accounts"></ul>
+          <h4>Usage and inference</h4>
+          <div id="usage-wrap" aria-live="polite"></div>
+          <h4>Recent activity</h4>
+          <ul id="audit-list" aria-label="Recent activity"></ul>
+        </section>
+      </section>
+    </div>
+
+    <div class="auth-view" data-view="animal-detail" hidden>
+      <section aria-labelledby="animal-detail-heading">
+        <h2 id="animal-detail-heading">Animal trend</h2>
+        <div id="animal-detail-body" aria-live="polite"></div>
+        <div class="auth-row">
+          <button id="back-to-account" type="button" class="secondary-btn">Back to account</button>
+        </div>
+      </section>
+    </div>
 
     <footer>
       <p class="note">Estimate only — not a scale or vet advice. Check the source label (ollama vs local_fallback vs tape_measure). Do not dose medication from an estimate — always use a verified scale.</p>

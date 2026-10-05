@@ -18,6 +18,46 @@
     "image/gif",
   ]);
   const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"]);
+  const HEIC_EXTENSIONS = new Set([".heic", ".heif"]);
+
+  // Auth mode is set by account.js after probing /api/me. When the server
+  // requires auth, anonymous estimates are refused with 401 — block early
+  // with directions instead of burning an upload.
+  const authMode = { loggedIn: false, authRequired: false };
+  window.aifEstimator = {
+    setAuthMode(loggedIn, authRequired) {
+      authMode.loggedIn = loggedIn === true;
+      authMode.authRequired = authRequired === true;
+    },
+  };
+
+  function authBlocked() {
+    return authMode.authRequired && !authMode.loggedIn;
+  }
+
+  function linkedAnimal() {
+    try {
+      const select = document.getElementById("animal-select");
+      const value = select && typeof select.value === "string" ? select.value.trim() : "";
+      return value ? { animal_id: value } : {};
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  function newIdempotencyKey() {
+    try {
+      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+      }
+    } catch (_error) {
+      // Fall through to the Math.random fallback.
+    }
+    const hex = "0123456789abcdef";
+    let out = "";
+    for (let i = 0; i < 32; i += 1) out += hex[Math.floor(Math.random() * 16)];
+    return `${out.slice(0, 8)}-${out.slice(8, 12)}-${out.slice(12, 16)}-${out.slice(16, 20)}-${out.slice(20)}`;
+  }
 
   const $ = (id) => document.getElementById(id);
   const input = $("image-input");
@@ -122,6 +162,9 @@
   }
 
   function fileProblem(file) {
+    const lower = file.name.toLowerCase();
+    const ext = lower.slice(lower.lastIndexOf("."));
+    if (HEIC_EXTENSIONS.has(ext)) return "HEIC photos are not supported — export or convert to JPEG first";
     if (!supportedFile(file)) return "unsupported type";
     if (file.size > MAX_FILE_BYTES) return `too large (${formatBytes(file.size)})`;
     return null;
@@ -315,6 +358,9 @@
   }
 
   async function requestEstimate(body, externalSignal) {
+    // Idempotency: retries and reconnects replay the same key so a retried
+    // upload returns the stored result instead of spending inference twice.
+    if (!body.idempotency_key) body.idempotency_key = newIdempotencyKey();
     const controller = new AbortController();
     currentController = controller;
     const onAbort = () => controller.abort();
@@ -372,6 +418,11 @@
   }
 
   async function requestBatch(items, externalSignal) {
+    for (const item of items) {
+      if (item && typeof item === "object" && !item.idempotency_key) {
+        item.idempotency_key = newIdempotencyKey();
+      }
+    }
     const controller = new AbortController();
     currentController = controller;
     const onAbort = () => controller.abort();
@@ -476,9 +527,14 @@
     const suffix = [code ? `code: ${code}` : "", rid ? `request: ${rid}` : ""].filter(Boolean).join(", ");
     const withRef = (base) => (suffix ? `${base} (${suffix})` : base);
     if (code === "missing_image") return withRef("Choose an image before estimating.");
-    if (code === "invalid_image") return withRef("That file is not a supported image. Use JPEG, PNG, WebP, BMP, or GIF.");
+    if (code === "invalid_image") return withRef("That file is not a supported image. Use JPEG, PNG, WebP, BMP, or GIF (not HEIC).");
     if (code === "estimation_failed") return withRef("The estimator could not complete the request. Try again.");
     if (code === "server_busy") return withRef("The server is busy. Wait a moment, then retry.");
+    if (code === "unauthorized") return withRef("Log in to use the estimator.");
+    if (code === "csrf_invalid") return withRef("Your session changed — reload the page and log in again.");
+    if (code === "quota_exceeded") return withRef("Daily estimate limit reached. Try again tomorrow.");
+    if (code === "inference_paused") return withRef("AI estimates are paused by the operator — tape estimates still work.");
+    if (code === "rate_limited") return withRef("Too many attempts. Wait a bit, then try again.");
     if (code === "invalid_options" || code === "missing_body" || code === "invalid_json") {
       return withRef("The request was rejected. Check the file and try again.");
     }
@@ -811,7 +867,7 @@
       const dataUrl = await fileToDataUrl(found.file);
       if (cancelRequested) return;
       const result = await requestEstimateWithRetry(
-        { image_base64: dataUrl, ...profile, ...crossFields },
+        { image_base64: dataUrl, ...profile, ...crossFields, ...linkedAnimal() },
         retrySignal.signal,
       );
       pushHistory(found.filename, result, "upload");
@@ -841,6 +897,10 @@
 
   async function runEstimates() {
     if (busy) return;
+    if (authBlocked()) {
+      setStatus("Log in to use the estimator — accounts require an invitation.");
+      return;
+    }
     const files = Array.from(input.files || []);
     if (!files.length) {
       setStatus("Choose at least one image first.");
@@ -853,6 +913,7 @@
     }
     const crossCheck = readTapeCrossCheck();
     const crossFields = crossCheck.skipped ? {} : crossCheck;
+    const animalLink = linkedAnimal();
     setBusy(true);
     cancelRequested = false;
     const batchSignal = new AbortController();
@@ -901,7 +962,7 @@
             cancelled = true;
             break;
           }
-          validItems.push({ image_base64: dataUrl, ...profile, ...crossFields });
+          validItems.push({ image_base64: dataUrl, ...profile, ...crossFields, ...animalLink });
           validNames.push(item.filename);
           validIndices.push(item.fileIndex);
         } catch (error) {
@@ -1153,8 +1214,7 @@
   }
 
   function pushHistory(filename, result, kind) {
-    const described = describeResult(filename, result);
-    const stamp = formatTime(new Date());
+    const described = describeResult(filename, result);    const stamp = formatTime(new Date());
     const rid = typeof result._requestId === "string" && result._requestId
       ? result._requestId
       : (typeof result.request_id === "string" ? result.request_id : "");
@@ -1189,6 +1249,15 @@
     });
     if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
     renderHistory();
+    // Logged-in estimates are also saved server-side; tell account.js to
+    // refresh the durable history view.
+    if (result && result.saved === true) {
+      try {
+        document.dispatchEvent(new CustomEvent("aif-estimate-saved"));
+      } catch (_error) {
+        // The session history above is already rendered.
+      }
+    }
   }
 
   function removeHistory(id) {
@@ -1325,6 +1394,10 @@
 
   async function runDemo() {
     if (busy) return;
+    if (authBlocked()) {
+      setStatus("Log in to use the estimator — accounts require an invitation.");
+      return;
+    }
     const id = demoSelect.value;
     if (!id) {
       setStatus("Choose a demo cow first.");
@@ -1342,7 +1415,7 @@
     setDemoStatus(`Estimating ${label}…`);
     try {
       const url = new URL(`/demo-cows/${encodeURIComponent(id)}`, window.location.origin).toString();
-      const result = await requestEstimateWithRetry({ image_url: url, ...profile });
+      const result = await requestEstimateWithRetry({ image_url: url, ...profile, ...linkedAnimal() });
       pushHistory(label, result, "demo");
       setStatus("Done.");
       setDemoStatus("Done.");
@@ -1359,6 +1432,10 @@
 
   async function runTape() {
     if (busy || !tapeGirth || !tapeLength) return;
+    if (authBlocked()) {
+      setTapeStatus("Log in to use the estimator — accounts require an invitation.");
+      return;
+    }
     const girth = Number.parseFloat(tapeGirth.value);
     const length = Number.parseFloat(tapeLength.value);
     if (!Number.isFinite(girth) || !Number.isFinite(length)) {
@@ -1385,7 +1462,7 @@
     setTapeStatus(`Estimating from tape (${girth} × ${length} cm)…`);
     setStatus(`Estimating from tape measurements…`);
     try {
-      const result = await requestEstimateWithRetry({ heart_girth_cm: girth, body_length_cm: length, ...profile });
+      const result = await requestEstimateWithRetry({ heart_girth_cm: girth, body_length_cm: length, ...profile, ...linkedAnimal() });
       const label = `Tape ${girth}×${length} cm`;
       pushHistory(label, result, "tape");
       setStatus("Done.");
@@ -1447,6 +1524,12 @@
   });
   window.addEventListener("online", () => {
     void checkHealth();
+  });
+  // Warn before leaving with a meaningful unsent selection: files are only
+  // uploaded when Estimate is pressed, so navigation would discard real work.
+  window.addEventListener("beforeunload", (event) => {
+    const files = input && input.files ? input.files.length : 0;
+    if (files > 0) event.preventDefault();
   });
   window.addEventListener("offline", () => {
     healthPill.textContent = "Backend unavailable";
