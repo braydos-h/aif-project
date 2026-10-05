@@ -4,13 +4,13 @@
 
 ## Todo
 
-- [ ] In production reject ordinary-user overrides for ollama_url, ollama_api_key, model, and backend; keep provider secrets on the server.
-- [ ] Audit custom HTTP parsing, framing, timeouts, connection limits, and reverse-proxy behavior; decide whether a maintained Rust HTTP stack is required.
-- [ ] Enforce CSRF protection, intentional same-origin/CORS policy, security headers, and a compatible Content Security Policy.
-- [ ] Preserve request IDs, structured errors, body/image limits, static route allow-lists, secret redaction, and SSRF defenses.
-- [ ] Reduce public info/health details and keep metrics private; test malformed traffic and blocked private-network image URLs.
+- [x] In production reject ordinary-user overrides for ollama_url, ollama_api_key, model, and backend; keep provider secrets on the server.
+- [x] Audit custom HTTP parsing, framing, timeouts, connection limits, and reverse-proxy behavior; decide whether a maintained Rust HTTP stack is required.
+- [x] Enforce CSRF protection, intentional same-origin/CORS policy, security headers, and a compatible Content Security Policy.
+- [x] Preserve request IDs, structured errors, body/image limits, static route allow-lists, secret redaction, and SSRF defenses.
+- [x] Reduce public info/health details and keep metrics private; test malformed traffic and blocked private-network image URLs.
 
-- [ ] Treat model replies as untrusted data: validate finite values, units, ranges, and response sizes before saving or displaying results; image or prompt instructions must not change authorization or server configuration.
+- [x] Treat model replies as untrusted data: validate finite values, units, ranges, and response sizes before saving or displaying results; image or prompt instructions must not change authorization or server configuration.
 
 ## Completion check
 

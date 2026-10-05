@@ -60,7 +60,15 @@ jobs:
 
       - name: Guard against unsafe dynamic HTML
         # Dynamic browser values must use textContent/DOM APIs, never string-built HTML.
-        run: '! grep -rn --include=app.js -E "innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function" web/'
+        run: '! grep -rn --include=*.js -E "innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function" web/'
+
+      - name: Guard against browser-stored secrets
+        # Session tokens, passwords, invite/reset tokens, and photos must never
+        # land in web storage.
+        run: '! grep -rn --include=*.js -E "localStorage|sessionStorage" web/'
+
+      - name: Check deploy scripts
+        run: sh -n deploy/install.sh && sh -n deploy/update.sh && sh -n deploy/rollback.sh && sh -n deploy/backup.sh && sh -n deploy/restore.sh
 
       - name: Set up Node for WebUI syntax check
         uses: actions/setup-node@v4
@@ -76,4 +84,9 @@ jobs:
         run: cargo build --release --manifest-path backend/Cargo.toml
 
       - name: Validate WebUI syntax
-        run: node --check web/app.js
+        run: node --check web/app.js && node --check web/account.js
+
+      - name: Run reference evaluation (synthetic fixture)
+        # Real-data acceptance stays blocked (eval/README.md); this guards
+        # the framework, schema, and gate plumbing on synthetic rows.
+        run: AIF_AI_BACKEND=none cargo run --manifest-path backend/Cargo.toml --bin aif-eval -- --dataset eval/fixtures/example.json --out /tmp/opencode/eval-report.json

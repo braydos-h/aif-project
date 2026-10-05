@@ -4,10 +4,10 @@
 
 ## Todo
 
-- [ ] Add optional animal IDs/names and relevant animal details.
-- [ ] Associate estimates with an animal so trends do not mix unrelated cows.
-- [ ] Distinguish photo estimates, tape estimates, and manually recorded scale measurements.
-- [ ] Support editing, archiving/deleting, and exports with the agreed private/shared permission rules.
+- [x] Add optional animal IDs/names and relevant animal details.
+- [x] Associate estimates with an animal so trends do not mix unrelated cows.
+- [x] Distinguish photo estimates, tape estimates, and manually recorded scale measurements.
+- [x] Support editing, archiving/deleting, and exports with the agreed private/shared permission rules.
 
 ## Completion check
 
