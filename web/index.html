@@ -20,11 +20,11 @@
     <p class="note" role="status">Status: <span id="health-pill">Checking backend…</span> <span id="backend-label"></span></p>
 
     <div class="auth-view" data-view="estimator">
-    <label for="image-input">Choose images</label>
-    <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple capture="environment" aria-describedby="limits-hint status">
+    <label for="image-input">Choose images</label>    <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple capture="environment" aria-describedby="limits-hint status">
     <p id="limits-hint" class="note">JPEG, PNG, WebP, BMP, or GIF, 20 MB or less per file. HEIC photos are not supported — export them as JPEG first. Large photos are resized in your browser to upload faster. Files stay on this device until you press Estimate. You can also drag and drop files anywhere on this page or paste images from the clipboard.</p>
     <ul id="file-list" hidden aria-label="Selected files"></ul>
     <button id="estimate-button" type="button">Estimate Weight</button>
+    <button id="background-button" type="button" class="secondary-btn" title="Queue the estimate to run in the background while logged in">Estimate in background</button>
     <button id="cancel-button" type="button" hidden>Cancel</button>
     <button id="clear-button" type="button" hidden>Clear selection</button>
     <p class="note">Tip: fill in the tape measurements below before estimating to attach a tape cross-check to each photo.</p>
@@ -70,6 +70,9 @@
           <option value="">No animal — do not link</option>
         </select>
         <p class="note">Logged-in users can link an estimate to one of their animals so trends never mix unrelated cows. <a href="#account">Manage animals in Account</a>.</p>
+        <label for="retain-photo">
+          <input id="retain-photo" type="checkbox"> Retain this photo privately (when the server enables retention)
+        </label>
       </div>
       <div class="profile-row">
         <div>
@@ -277,8 +280,7 @@
           </div>
           <p class="note">Edit an animal (or open its trend) first so the reading lands on the right animal.</p>
         </form>
-        <h3>Saved history</h3>
-        <p class="note">Your private server-side history. Dates show in your timezone; the server stores UTC.</p>
+        <h3>Saved history</h3>        <p class="note">Your private server-side history. Dates show in your timezone; the server stores UTC.</p>
         <form id="history-filter-form" class="auth-card">
           <label for="history-filter-source">Source
             <select id="history-filter-source">
@@ -305,6 +307,14 @@
         <div class="auth-row">
           <button id="history-export-server" type="button" class="secondary-btn">Export history CSV</button>
         </div>
+        <h3>Background jobs</h3>
+        <p class="note">Queued estimates keep running when your connection drops. Open a job to see its result.</p>
+        <ul id="job-list" aria-label="Background jobs"></ul>
+        <p id="job-empty" class="note">No background jobs.</p>
+        <h3>Retained photos</h3>
+        <p class="note">Only here when you tick retention on an estimate and the operator enables it. Photos expire automatically.</p>
+        <ul id="photo-list" aria-label="Retained photos"></ul>
+        <p id="photo-empty" class="note">No retained photos.</p>
         <h3>Your data</h3>
         <div class="auth-row">
           <button id="account-export" type="button" class="secondary-btn">Export all my data (JSON)</button>

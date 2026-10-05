@@ -126,7 +126,7 @@
       window.aifEstimator.setAuthMode(state.authenticated, state.authRequired);
     }
     if (state.authenticated) {
-      await Promise.all([loadAnimals(), loadServerHistory(), loadAccountSummary()]);
+      await Promise.all([loadAnimals(), loadServerHistory(), loadAccountSummary(), loadJobs(), loadPhotos()]);
       if (state.user && state.user.role === "operator") await loadOperator();
     } else {
       clearPrivateUI();
@@ -217,7 +217,7 @@
   }
 
   function clearPrivateUI() {
-    for (const id of ["server-history-list", "animal-list", "invite-list", "user-list", "usage-list", "audit-list"]) {
+    for (const id of ["server-history-list", "animal-list", "invite-list", "user-list", "usage-list", "audit-list", "job-list", "photo-list"]) {
       const el = $(id);
       if (el) el.replaceChildren();
     }
@@ -860,6 +860,120 @@
     }
   }
 
+  // --- background jobs -----------------------------------------------------
+
+  async function loadJobs() {
+    const list = $("job-list");
+    if (!list || !state.authenticated) return;
+    list.replaceChildren();
+    const empty = $("job-empty");
+    try {
+      const data = await call("GET", "/api/jobs");
+      const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+      if (empty) empty.hidden = jobs.length > 0;
+      for (const job of jobs) list.append(jobRow(job));
+    } catch (error) {
+      if (empty) {
+        empty.hidden = false;
+        empty.textContent = apiError(error, "Could not load jobs.");
+      }
+    }
+  }
+
+  function jobRow(job) {
+    const li = document.createElement("li");
+    const title = document.createElement("strong");
+    const id = typeof job.id === "string" ? job.id : "";
+    const short = id ? id.slice(0, 8) : "job";
+    title.textContent = `Job ${short} · ${job.status || "unknown"}`;
+    const meta = document.createElement("p");
+    meta.className = "small-meta";
+    const bits = [`created ${fmtDate(job.created_at)}`];
+    if (job.status === "success" && job.result && typeof job.result.estimated_weight_kg === "number") {
+      bits.push(`${fmtKg(job.result.estimated_weight_kg)} kg`);
+      if (job.result.source === "local_fallback") bits.push("offline placeholder");
+    }
+    if (job.status === "failed" && job.error_code) bits.push(`failed: ${job.error_code}`);
+    if (typeof job.attempts === "number") bits.push(`${job.attempts} attempt${job.attempts === 1 ? "" : "s"}`);
+    meta.textContent = bits.join(" · ");
+    li.append(title, meta);
+    if (job.status === "queued" && id) {
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "secondary-btn";
+      cancel.textContent = "Cancel";
+      cancel.setAttribute("aria-label", `Cancel job ${short}`);
+      cancel.addEventListener("click", async () => {
+        try {
+          await call("POST", `/api/jobs/${encodeURIComponent(id)}/cancel`, {});
+          status("Job cancelled.");
+          await loadJobs();
+        } catch (error) {
+          status(apiError(error, "Could not cancel that job."));
+        }
+      });
+      li.append(cancel);
+    }
+    return li;
+  }
+
+  // --- retained photos ------------------------------------------------------
+
+  async function loadPhotos() {
+    const list = $("photo-list");
+    if (!list || !state.authenticated) return;
+    list.replaceChildren();
+    const empty = $("photo-empty");
+    try {
+      const data = await call("GET", "/api/photos");
+      const photos = Array.isArray(data.photos) ? data.photos : [];
+      if (empty) empty.hidden = photos.length > 0;
+      for (const photo of photos) list.append(photoRow(photo));
+    } catch (error) {
+      if (empty) {
+        empty.hidden = false;
+        empty.textContent = apiError(error, "Could not load photos.");
+      }
+    }
+  }
+
+  function photoRow(photo) {
+    const li = document.createElement("li");
+    const title = document.createElement("strong");
+    title.textContent = `Photo · ${fmtDate(photo.created_at)}`;
+    const meta = document.createElement("p");
+    meta.className = "small-meta";
+    const kb = typeof photo.bytes === "number" ? `${(photo.bytes / 1024).toFixed(1)} KB` : "";
+    meta.textContent = `expires ${fmtDate(photo.expires_at)}${kb ? ` · ${kb}` : ""}`;
+    li.append(title, meta);
+    if (typeof photo.url === "string" && photo.url) {
+      const open = document.createElement("a");
+      open.className = "auth-link";
+      open.href = photo.url;
+      open.textContent = "Download";
+      open.setAttribute("download", "");
+      li.append(open);
+    }
+    if (typeof photo.id === "string" && photo.id) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "danger-btn";
+      del.textContent = "Delete";
+      del.setAttribute("aria-label", "Delete retained photo");
+      del.addEventListener("click", async () => {
+        try {
+          await call("DELETE", `/api/photos/${encodeURIComponent(photo.id)}`);
+          status("Photo deleted.");
+          await loadPhotos();
+        } catch (error) {
+          status(apiError(error, "Could not delete that photo."));
+        }
+      });
+      li.append(del);
+    }
+    return li;
+  }
+
   // --- operator ------------------------------------------------------------
 
   async function loadOperator() {
@@ -994,6 +1108,22 @@
         list.append(li);
       }
       wrap.append(list);
+      try {
+        const statusData = await call("GET", "/api/operator/status");
+        const alerts = Array.isArray(statusData.alerts) ? statusData.alerts : [];
+        const heading = document.createElement("p");
+        heading.className = "small-meta";
+        heading.textContent = alerts.length ? "Active alerts:" : "No active alerts.";
+        wrap.append(heading);
+        for (const alert of alerts) {
+          const line = document.createElement("p");
+          line.className = "small-meta";
+          line.textContent = `[${alert.kind || "notice"}] ${alert.message || ""}`;
+          wrap.append(line);
+        }
+      } catch (_error) {
+        // Usage already rendered; alerts are enrichment only.
+      }
     } catch (error) {
       wrap.textContent = apiError(error, "Could not load usage.");
     }
@@ -1024,6 +1154,8 @@
       void loadServerHistory();
       void loadAccountSummary();
       void loadAnimals();
+      void loadJobs();
+      void loadPhotos();
     }
   }
 
@@ -1054,6 +1186,9 @@
     });
     bind("back-to-account", "click", () => showView("account"));
     document.addEventListener("aif-estimate-saved", onEstimateSaved);
+    document.addEventListener("aif-jobs-changed", () => {
+      if (state.authenticated) void loadJobs();
+    });
     window.addEventListener("hashchange", () => {
       prefillInviteToken();
       prefillRecoveryToken();

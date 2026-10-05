@@ -2768,3 +2768,483 @@ fn js_guards_cover_account_assets() {
         assert!(html.contains(needle), "index.html missing {}", needle);
     }
 }
+
+// --- photo retention, durable jobs, operator alerts (items 8-10) ---
+
+fn setup_retention(extra: &[(&str, &str)], prefix: &str) -> (TestServer, String) {
+    let data_dir = unique_data_dir(prefix);
+    let mut env: Vec<(&str, &str)> = vec![
+        ("AIF_AI_BACKEND", "none"),
+        ("AIF_REQUIRE_AUTH", "1"),
+        ("AIF_DATA_DIR", &data_dir),
+        ("AIF_RETAIN_PHOTOS", "1"),
+    ];
+    env.extend_from_slice(extra);
+    (TestServer::new(&env), data_dir)
+}
+
+fn photo_payload() -> String {
+    format!(
+        r#"{{"image_base64": "{}", "retain_photo": true}}"#,
+        png_b64()
+    )
+}
+
+#[test]
+fn photo_retention_lifecycle_owner_only() {
+    let (server, dir) = setup_retention(&[], "photoret");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    // Retain a photo with the estimate.
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(&photo_payload()),
+    );
+    assert_eq!(status, 200);
+    let photo_id = body["photo_id"].as_str().expect("photo_id").to_string();
+    assert_eq!(photo_id.len(), 32);
+    assert!(body.get("photo_error").is_none());
+    // Metadata listing + private owner-only download.
+    let (status, _, list) = authed(&server, "GET", "/api/photos", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["photos"].as_array().unwrap().len(), 1);
+    assert_eq!(list["photos"][0]["mime"], "image/png");
+    let (status, headers, raw) = authed_raw(
+        &server,
+        "GET",
+        &format!("/api/photos/{}", photo_id),
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert!(headers["content-type"].contains("image/png"));
+    assert_eq!(
+        headers.get("cache-control").map(|s| s.as_str()),
+        Some("private, max-age=86400")
+    );
+    assert!(!headers.contains_key("access-control-allow-origin"));
+    assert_eq!(raw, png_bytes());
+    // File actually lives under an opaque id in the photo dir.
+    assert!(std::path::Path::new(&dir)
+        .join("photos")
+        .join(&photo_id)
+        .is_file());
+    // Another user gets 404 (no existence oracle); anonymous gets 401.
+    let token_b = cli_invite(&dir, "b@example.com", "user");
+    let (_, _, _, session_b) = accept_invite(&server, &token_b, "password for bobby", "Bobby");
+    let (status, _, _) = authed(
+        &server,
+        "GET",
+        &format!("/api/photos/{}", photo_id),
+        Some(&session_b.unwrap()),
+        None,
+    );
+    assert_eq!(status, 404);
+    let (status, _, _) = authed(
+        &server,
+        "GET",
+        &format!("/api/photos/{}", photo_id),
+        None,
+        None,
+    );
+    assert_eq!(status, 401);
+    let (status, _, _) = authed(
+        &server,
+        "GET",
+        "/api/photos/../../../../etc/passwdxxxxxxxxxxxxxxxx",
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 404);
+    // Owner deletion removes the row and the file.
+    let (status, _, _) = authed(
+        &server,
+        "DELETE",
+        &format!("/api/photos/{}", photo_id),
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert!(!std::path::Path::new(&dir)
+        .join("photos")
+        .join(&photo_id)
+        .exists());
+    let (status, _, _) = authed(
+        &server,
+        "GET",
+        &format!("/api/photos/{}", photo_id),
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 404);
+}
+
+#[test]
+fn photo_history_delete_removes_linked_photo() {
+    let (server, dir) = setup_retention(&[], "photohist");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(&photo_payload()),
+    );
+    assert_eq!(status, 200);
+    let photo_id = body["photo_id"].as_str().unwrap().to_string();
+    let history_id = body["history_id"].as_str().unwrap().to_string();
+    let (status, _, _) = authed(
+        &server,
+        "DELETE",
+        &format!("/api/history/{}", history_id),
+        Some(&session),
+        None,
+    );
+    assert_eq!(status, 200);
+    // Row cascaded via FK and the file is gone.
+    let (status, _, list) = authed(&server, "GET", "/api/photos", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["photos"].as_array().unwrap().len(), 0);
+    assert!(!std::path::Path::new(&dir)
+        .join("photos")
+        .join(&photo_id)
+        .exists());
+}
+
+#[test]
+fn photo_retention_off_by_default() {
+    let (server, dir) = setup_auth(&[], "photodefault");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    // Retention quietly stays off: the estimate succeeds, nothing is stored.
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(&photo_payload()),
+    );
+    assert_eq!(status, 200);
+    assert!(body.get("photo_id").is_none());
+    let (status, _, list) = authed(&server, "GET", "/api/photos", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["photos"].as_array().unwrap().len(), 0);
+    let (status, _, summary) = authed(&server, "GET", "/api/account", Some(&session), None);
+    assert_eq!(status, 200);
+    assert!(summary["photo_policy"]
+        .as_str()
+        .unwrap()
+        .contains("transient-only"));
+}
+
+#[test]
+fn photo_account_wipe_clears_files() {
+    let (server, dir) = setup_retention(&[], "photowipe");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/estimate-weight",
+        Some(&session),
+        Some(&photo_payload()),
+    );
+    assert_eq!(status, 200);
+    let photo_dir = std::path::Path::new(&dir).join("photos");
+    assert_eq!(std::fs::read_dir(&photo_dir).unwrap().count(), 1);
+    let (status, _, _) = authed(
+        &server,
+        "DELETE",
+        "/api/account",
+        Some(&session),
+        Some(r#"{"password": "long enough password"}"#),
+    );
+    assert_eq!(status, 200);
+    let leftovers: usize = std::fs::read_dir(&photo_dir)
+        .map(|e| e.count())
+        .unwrap_or(0);
+    assert_eq!(leftovers, 0);
+}
+
+fn poll_job(server: &TestServer, session: &Session, id: &str, secs: u64) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        let (status, _, job) = authed(
+            server,
+            "GET",
+            &format!("/api/jobs/{}", id),
+            Some(session),
+            None,
+        );
+        assert_eq!(status, 200);
+        let terminal = matches!(
+            job["status"].as_str(),
+            Some("success") | Some("failed") | Some("cancelled") | Some("expired")
+        );
+        if terminal || Instant::now() >= deadline {
+            return job;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn job_lifecycle_saves_exactly_once() {
+    let (server, dir) = setup_auth(&[], "joblife");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let (status, _, created) = authed(
+        &server,
+        "POST",
+        "/api/jobs",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150, "idempotency_key": "job-1"}"#),
+    );
+    assert_eq!(status, 202);
+    let job_id = created["id"].as_str().unwrap().to_string();
+    let job = poll_job(&server, &session, &job_id, 15);
+    assert_eq!(job["status"], "success");
+    assert_eq!(job["result"]["estimated_weight_kg"], 448.4);
+    assert!(job["history_id"].as_str().is_some());
+    // Exactly one history row: no duplicates from the background path.
+    let (status, _, list) = authed(&server, "GET", "/api/history", Some(&session), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["total"], 1);
+    // Same idempotency key returns the same job, not a new row.
+    let (status, _, again) = authed(
+        &server,
+        "POST",
+        "/api/jobs",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 170, "body_length_cm": 140, "idempotency_key": "job-1"}"#),
+    );
+    assert_eq!(status, 202);
+    assert_eq!(again["id"], job_id);
+    assert_eq!(again["replayed"], true);
+}
+
+#[test]
+fn job_failed_payload_is_permanent() {
+    let (server, dir) = setup_auth(&[], "jobfail");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    let (status, _, created) = authed(
+        &server,
+        "POST",
+        "/api/jobs",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180}"#),
+    );
+    assert_eq!(status, 202);
+    let job = poll_job(&server, &session, created["id"].as_str().unwrap(), 15);
+    assert_eq!(job["status"], "failed");
+    assert_eq!(job["error_code"], "invalid_options");
+    assert_eq!(job["attempts"], 1);
+}
+
+#[test]
+fn job_cancel_and_isolation() {
+    let (server, dir) = setup_auth(&[("AIF_JOB_WORKER", "0")], "jobcancel");
+    let token_a = cli_invite(&dir, "a@example.com", "operator");
+    let (_, _, _, session_a) = accept_invite(&server, &token_a, "password for alice", "Alice");
+    let token_b = cli_invite(&dir, "b@example.com", "user");
+    let (_, _, _, session_b) = accept_invite(&server, &token_b, "password for bobby", "Bobby");
+    let (a, b) = (session_a.unwrap(), session_b.unwrap());
+    let (status, _, created) = authed(
+        &server,
+        "POST",
+        "/api/jobs",
+        Some(&a),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150}"#),
+    );
+    assert_eq!(status, 202);
+    let job_id = created["id"].as_str().unwrap().to_string();
+    // B cannot see or cancel A's job.
+    let (status, _, _) = authed(
+        &server,
+        "GET",
+        &format!("/api/jobs/{}", job_id),
+        Some(&b),
+        None,
+    );
+    assert_eq!(status, 404);
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        &format!("/api/jobs/{}/cancel", job_id),
+        Some(&b),
+        None,
+    );
+    assert_eq!(status, 404);
+    // A cancels the still-queued job (worker disabled).
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        &format!("/api/jobs/{}/cancel", job_id),
+        Some(&a),
+        Some("{}"),
+    );
+    assert_eq!(status, 200);
+    let (status, _, job) = authed(
+        &server,
+        "GET",
+        &format!("/api/jobs/{}", job_id),
+        Some(&a),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(job["status"], "cancelled");
+    // Cancelling twice fails loudly (already terminal).
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        &format!("/api/jobs/{}/cancel", job_id),
+        Some(&a),
+        Some("{}"),
+    );
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "invalid_options");
+}
+
+#[test]
+fn job_queue_depth_is_bounded() {
+    let (server, dir) = setup_auth(&[("AIF_JOB_WORKER", "0")], "jobqueue");
+    let token = cli_invite(&dir, "a@example.com", "user");
+    let (_, _, _, session) = accept_invite(&server, &token, "long enough password", "A");
+    let session = session.unwrap();
+    for i in 0..20 {
+        let payload = format!(
+            r#"{{"heart_girth_cm": 180, "body_length_cm": 150, "idempotency_key": "q-{}"}}"#,
+            i
+        );
+        let (status, _, _) = authed(&server, "POST", "/api/jobs", Some(&session), Some(&payload));
+        assert_eq!(status, 202, "job {}", i);
+    }
+    let (status, _, body) = authed(
+        &server,
+        "POST",
+        "/api/jobs",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150, "idempotency_key": "q-full"}"#),
+    );
+    assert_eq!(status, 429);
+    assert_eq!(body["code"], "rate_limited");
+}
+
+#[test]
+fn job_survives_pause_and_restart_exactly_once() {
+    let (mut server, dir) = setup_auth(&[], "jobrestart");
+    let token = cli_invite(&dir, "op@example.com", "operator");
+    let (_, _, _, op) = accept_invite(&server, &token, "operator password 1", "Op");
+    let op = op.unwrap();
+    // Pause: the worker leaves jobs queued without failing them.
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        "/api/operator/pause",
+        Some(&op),
+        Some(r#"{"paused": true}"#),
+    );
+    assert_eq!(status, 200);
+    let (status, _, created) = authed(
+        &server,
+        "POST",
+        "/api/jobs",
+        Some(&op),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150, "idempotency_key": "restart-1"}"#),
+    );
+    assert_eq!(status, 202);
+    let job_id = created["id"].as_str().unwrap().to_string();
+    std::thread::sleep(Duration::from_millis(1200));
+    let (status, _, still) = authed(
+        &server,
+        "GET",
+        &format!("/api/jobs/{}", job_id),
+        Some(&op),
+        None,
+    );
+    assert_eq!(status, 200);
+    assert_eq!(still["status"], "queued");
+    // Restart clears the runtime pause; the worker picks the job up and the
+    // idempotency key guarantees a single saved result.
+    server.restart();
+    let fresh = login(&server, "op@example.com", "operator password 1");
+    let job = poll_job(&server, &fresh, &job_id, 15);
+    assert_eq!(job["status"], "success");
+    let (status, _, list) = authed(&server, "GET", "/api/history", Some(&fresh), None);
+    assert_eq!(status, 200);
+    assert_eq!(list["total"], 1);
+}
+
+#[test]
+fn operator_status_carries_spending_alerts() {
+    let (server, dir) = setup_auth(&[("AIF_DAILY_LIMIT", "2")], "alerts");
+    let token = cli_invite(&dir, "op@example.com", "operator");
+    let (_, _, _, op) = accept_invite(&server, &token, "operator password 1", "Op");
+    let op = op.unwrap();
+    let (status, _, quiet) = authed(&server, "GET", "/api/operator/status", Some(&op), None);
+    assert_eq!(status, 200);
+    assert!(quiet["alerts"].as_array().unwrap().is_empty());
+    let photo = format!(r#"{{"image_base64": "{}"}}"#, png_b64());
+    for _ in 0..2 {
+        let (status, _, _) = authed(&server, "POST", "/estimate-weight", Some(&op), Some(&photo));
+        assert_eq!(status, 200);
+    }
+    let (status, _, loud) = authed(&server, "GET", "/api/operator/status", Some(&op), None);
+    assert_eq!(status, 200);
+    let alerts = loud["alerts"].as_array().unwrap();
+    assert!(alerts
+        .iter()
+        .any(|a| a["kind"] == "usage_high"
+            && a["message"].as_str().unwrap().contains("op@example.com")));
+    assert!(loud.get("data_dir_mb").is_some());
+    assert!(loud.get("photo_retention").is_some());
+    assert!(loud.get("jobs_enabled").is_some());
+}
+
+#[test]
+fn js_guards_cover_jobs_photos_and_background() {
+    let js = web_file("account.js");
+    for needle in [
+        "api/jobs",
+        "api/photos",
+        "job-list",
+        "photo-list",
+        "aif-jobs-changed",
+    ] {
+        assert!(js.contains(needle), "account.js missing {}", needle);
+    }
+    let app = web_file("app.js");
+    for needle in [
+        "background-button",
+        "runBackground",
+        "retain_photo",
+        "idempotency_key",
+        "aif-jobs-changed",
+    ] {
+        assert!(app.contains(needle), "app.js missing {}", needle);
+    }
+    assert!(app.contains("textContent"));
+    assert!(!app.contains("innerHTML"));
+    let html = web_file("index.html");
+    for needle in [
+        r#"id="background-button""#,
+        r#"id="retain-photo""#,
+        r#"id="job-list""#,
+        r#"id="photo-list""#,
+        r#"id="job-empty""#,
+        r#"id="photo-empty""#,
+    ] {
+        assert!(html.contains(needle), "index.html missing {}", needle);
+    }
+}

@@ -45,6 +45,26 @@
     }
   }
 
+  function retentionFlag() {
+    try {
+      const box = document.getElementById("retain-photo");
+      return box && box.checked ? { retain_photo: true } : {};
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  function csrfToken() {
+    try {
+      if (window.aifAccount && typeof window.aifAccount.csrf === "function") {
+        return window.aifAccount.csrf() || "";
+      }
+    } catch (_error) {
+      // No account UI loaded; background jobs need login anyway.
+    }
+    return "";
+  }
+
   function newIdempotencyKey() {
     try {
       if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -745,6 +765,8 @@
   function setBusy(next) {
     busy = next;
     button.disabled = next;
+    const backgroundButton = document.getElementById("background-button");
+    if (backgroundButton) backgroundButton.disabled = next;
     demoButton.disabled = next || !demoSelect.value;
     if (tapeButton) tapeButton.disabled = next;
     if (tapeGirth) tapeGirth.disabled = next;
@@ -867,7 +889,7 @@
       const dataUrl = await fileToDataUrl(found.file);
       if (cancelRequested) return;
       const result = await requestEstimateWithRetry(
-        { image_base64: dataUrl, ...profile, ...crossFields, ...linkedAnimal() },
+        { image_base64: dataUrl, ...profile, ...crossFields, ...linkedAnimal(), ...retentionFlag() },
         retrySignal.signal,
       );
       pushHistory(found.filename, result, "upload");
@@ -962,7 +984,7 @@
             cancelled = true;
             break;
           }
-          validItems.push({ image_base64: dataUrl, ...profile, ...crossFields, ...animalLink });
+          validItems.push({ image_base64: dataUrl, ...profile, ...crossFields, ...animalLink, ...retentionFlag() });
           validNames.push(item.filename);
           validIndices.push(item.fileIndex);
         } catch (error) {
@@ -1415,7 +1437,7 @@
     setDemoStatus(`Estimating ${label}…`);
     try {
       const url = new URL(`/demo-cows/${encodeURIComponent(id)}`, window.location.origin).toString();
-      const result = await requestEstimateWithRetry({ image_url: url, ...profile, ...linkedAnimal() });
+      const result = await requestEstimateWithRetry({ image_url: url, ...profile, ...linkedAnimal(), ...retentionFlag() });
       pushHistory(label, result, "demo");
       setStatus("Done.");
       setDemoStatus("Done.");
@@ -1463,8 +1485,7 @@
     setStatus(`Estimating from tape measurements…`);
     try {
       const result = await requestEstimateWithRetry({ heart_girth_cm: girth, body_length_cm: length, ...profile, ...linkedAnimal() });
-      const label = `Tape ${girth}×${length} cm`;
-      pushHistory(label, result, "tape");
+      const label = `Tape ${girth}×${length} cm`;      pushHistory(label, result, "tape");
       setStatus("Done.");
       setTapeStatus("Done. Tape uses Schaeffer's formula — verify with a scale; do not dose from it.");
     } catch (error) {
@@ -1481,7 +1502,77 @@
     }
   }
 
+  async function runBackground() {
+    if (busy) return;
+    if (!window.aifAccount || !window.aifAccount.isLoggedIn()) {
+      setStatus("Log in to queue background estimates.");
+      return;
+    }
+    const profile = readAnimalProfile();
+    if (!profile) {
+      setStatus("Check the animal details — breed, sex, or age needs attention.");
+      return;
+    }
+    const files = Array.from(input.files || []);
+    let payload = null;
+    let label = "";
+    const ready = files.find((file) => !fileProblem(file));
+    if (ready) {
+      setStatus(`Preparing ${ready.name} for background estimation…`);
+      try {
+        const dataUrl = await fileToDataUrl(ready);
+        payload = { image_base64: dataUrl, ...profile, ...linkedAnimal(), ...retentionFlag(), idempotency_key: newIdempotencyKey() };
+        label = ready.name;
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Could not read file.");
+        return;
+      }
+    } else {
+      const girth = tapeGirth ? Number.parseFloat(tapeGirth.value) : NaN;
+      const length = tapeLength ? Number.parseFloat(tapeLength.value) : NaN;
+      if (!Number.isFinite(girth) || !Number.isFinite(length) || girth < 50 || girth > 300 || length < 50 || length > 300) {
+        setStatus("Choose a valid image or enter both tape measurements (50–300 cm) first.");
+        return;
+      }
+      payload = { heart_girth_cm: girth, body_length_cm: length, ...profile, ...linkedAnimal(), idempotency_key: newIdempotencyKey() };
+      label = `Tape ${girth}×${length} cm`;
+    }
+    setStatus(`Queueing background estimate for ${label}…`);
+    try {
+      const response = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+        body: JSON.stringify(payload),
+        credentials: "same-origin",
+      });
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (_error) {
+        data = {};
+      }
+      if (!response.ok) {
+        const code = typeof data.code === "string" ? data.code : "";
+        setStatus(code === "quota_exceeded" || code === "rate_limited"
+          ? "Too many queued jobs or estimates — wait for some to finish."
+          : "Could not queue the background estimate.");
+        return;
+      }
+      const id = typeof data.id === "string" ? data.id : "";
+      setStatus(id ? `Queued as background job ${id.slice(0, 8)} — see Account for its result.` : "Queued.");
+      try {
+        document.dispatchEvent(new CustomEvent("aif-jobs-changed"));
+      } catch (_eventError) {
+        // The jobs panel refreshes on next Account visit regardless.
+      }
+    } catch (_error) {
+      setStatus("The backend could not be reached.");
+    }
+  }
+
   button.addEventListener("click", runEstimates);
+  const backgroundButton = document.getElementById("background-button");
+  if (backgroundButton) backgroundButton.addEventListener("click", runBackground);
   cancelButton.addEventListener("click", requestCancel);
   if (clearButton) clearButton.addEventListener("click", clearSelection);
   if (tapeButton) tapeButton.addEventListener("click", runTape);
