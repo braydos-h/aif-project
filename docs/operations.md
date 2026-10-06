@@ -22,7 +22,7 @@ password change, pause, exports, deletions) are appended to the audit log
 
 | Signal | How |
 | --- | --- |
-| Uptime | External check on `https://<domain>/health` (expects `{"status":"ok"}`); systemd `Restart=on-failure` + `journalctl -u aif-backend`. |
+| Uptime | External check on `https://<domain>/health` (expects `{"status":"ok"}`); systemd `Restart=always` + `journalctl -u aif-backend`. |
 | Provider failures | `journalctl` for `estimation failed`; operator `/api/operator/usage` and audit; `provider_errors` alert in `/api/operator/status` at 5+/hour. |
 | Usage spikes | `usage_high` alert in `/api/operator/status` at 80% of `AIF_DAILY_LIMIT`; shown in the operator panel. |
 | Disk capacity | Alert on `/var/lib/aif` and `/var/backups/aif` (`disk_high` alert in status past `AIF_DISK_ALERT_MB`; DB rows plus any retained photos under `<data_dir>/photos`). |

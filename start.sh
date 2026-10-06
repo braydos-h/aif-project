@@ -11,7 +11,7 @@ if [ ! -x "$BACKEND" ]; then
     exit 1
 fi
 
-"$BACKEND" --host 127.0.0.1 --port 8080 &
+"$BACKEND" --host 0.0.0.0 --port 8080 &
 SERVER_PID=$!
 
 URL="http://127.0.0.1:8080/"

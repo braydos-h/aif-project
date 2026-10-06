@@ -21,18 +21,23 @@ Build the Rust server, then start the application:
 
 ```powershell
 cargo build --release --manifest-path backend/Cargo.toml
-backend\target\release\aif-backend.exe --host 127.0.0.1 --port 8080
+backend\target\release\aif-backend.exe --host 0.0.0.0 --port 8080
 ```
 
 Open <http://127.0.0.1:8080/>. The server prints the listening URL on stdout.
+The default `--host 0.0.0.0` listens on all interfaces so other machines on
+the network can reach it; use `--host 127.0.0.1` to restrict to localhost
+only. Exposed instances should set `AIF_REQUIRE_AUTH=1` (always in
+production).
 
 For a shortcut that starts the server and opens the browser automatically,
 double-click `start_gui.bat` (or run `start_gui.ps1`); they launch the same
 binary and open the WebUI. `start.sh` is the Linux/macOS equivalent and
 `install.ps1` is the Windows first-time setup script. All launchers use
-the fixed default `127.0.0.1:8080` and take no port argument; if the port is
+the fixed default `0.0.0.0:8080` and take no port argument; if the port is
 taken, start the binary manually with a different `--port` (e.g. `--port
-8081`). The supported UI is the Rust-served WebUI.
+8081`). The supported UI is the Rust-served WebUI. Production (`deploy/`)
+stays loopback-only behind Caddy and is unchanged.
 
 CLI usage: `aif-backend [--host HOST] [--port PORT]`. Both `--flag value`
 and `--flag=value` forms work; `--help` prints usage and exits 0, while

@@ -9,5 +9,5 @@ if (-not (Test-Path -LiteralPath $backend)) {
     exit 1
 }
 
-Start-Process -FilePath $backend -ArgumentList '--host', '127.0.0.1', '--port', '8080'
+Start-Process -FilePath $backend -ArgumentList '--host', '0.0.0.0', '--port', '8080'
 Start-Process -FilePath 'http://127.0.0.1:8080/'

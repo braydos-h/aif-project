@@ -2,7 +2,7 @@
 //!
 //! Flags:
 //! - `--port N` (default 8080, `0` = ephemeral, printed to stdout)
-//! - `--host H` (default 127.0.0.1)
+//! - `--host H` (default 0.0.0.0, all interfaces)
 //!
 //! Operator administration (run against `AIF_DATA_DIR`, then exit):
 //! - `--create-invite EMAIL [--role user|operator]`
@@ -33,7 +33,7 @@ pub const USAGE: &str = "Usage: aif-backend [--host HOST] [--port PORT] [--creat
 /// Parse CLI args. `Ok(None)` means `--help`/`-h` was requested.
 /// Supports `--flag value` and `--flag=value` forms.
 pub fn parse_args(args: &[String]) -> Result<Option<Args>, String> {
-    let mut host = "127.0.0.1".to_string();
+    let mut host = "0.0.0.0".to_string();
     let mut port: u16 = 8080;
     let mut command: Option<AdminCommand> = None;
     let mut pending_role: Option<String> = None;
@@ -124,7 +124,7 @@ mod tests {
         let got = parse_args(&args(&["aif-backend", "--port=9000"]))
             .unwrap()
             .unwrap();
-        assert_eq!((got.host, got.port), ("127.0.0.1".to_string(), 9000));
+        assert_eq!((got.host, got.port), ("0.0.0.0".to_string(), 9000));
     }
 
     #[test]

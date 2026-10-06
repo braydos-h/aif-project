@@ -26,7 +26,7 @@ agent rules and [README.md](README.md) for the user/API documentation.
 | Task | Command |
 | --- | --- |
 | Build the server | `cargo build --release --manifest-path backend/Cargo.toml` |
-| Run the application | `backend/target/release/aif-backend --host 127.0.0.1 --port 8080` |
+| Run the application | `backend/target/release/aif-backend --host 0.0.0.0 --port 8080` |
 | Run the browser-opening launcher | `start_gui.bat` (or `start_gui.ps1`) |
 | Rust tests (unit + HTTP integration) | `cargo test --manifest-path backend/Cargo.toml` |
 | Lint (format check) | `cargo fmt --manifest-path backend/Cargo.toml -- --check` |

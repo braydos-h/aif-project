@@ -1,8 +1,9 @@
 # Production deployment
 
 Two-user invite-only hosting on a Linux host with Caddy in front of the
-Rust backend. The backend binds **127.0.0.1 only**; only ports 80/443 are
-public. Database/operator administration never touches the public network.
+Rust backend. Standalone open mode binds **0.0.0.0:8080** directly;
+proxy-only production may bind **127.0.0.1** instead so only ports
+80/443 are public. Database/operator administration never touches the public network.
 
 ## Prerequisites
 
@@ -88,6 +89,8 @@ working against current data (forward repair is also possible).
 
 ## Ports and firewall
 
-Public: 80/tcp + 443/tcp only. The backend (8080), SQLite, and operator
-CLI are loopback/localhost-only. `ufw allow 80,443/tcp` (or the cloud
-firewall equivalent) and deny the rest.
+Public: 80/tcp + 443/tcp (proxy mode) or 8080/tcp (standalone open mode
+binding 0.0.0.0). The SQLite database and operator CLI stay
+loopback/localhost-only. `ufw allow 80,443/tcp` (or the cloud
+firewall equivalent) and deny the rest; add `8080/tcp` only for direct
+0.0.0.0 access.
