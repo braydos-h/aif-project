@@ -845,3 +845,6 @@ Took todo/08 (photo retention), 09 (mobile reliability), and 10 (usage/spending 
 - **Context:** user asked for the app to run as a service so it survives reboots.
 - **Change:** `deploy/aif-backend.service` `ExecStart` now `--host 0.0.0.0 --port 8080` (matches open-mode request; proxy-only hosts can revert to `127.0.0.1`), `Restart=on-failure` -> `Restart=always`, comment updated; `docs/deployment.md` header + firewall section updated for standalone `0.0.0.0:8080` vs proxy mode; `docs/operations.md` uptime row updated to `Restart=always`. Installed on this host: `apt install sqlite3`, rebuilt release binary (picks up 0.0.0.0 default), `sudo sh deploy/install.sh`, `systemctl daemon-reload + enable + start`.
 - **Verification:** `systemctl is-active` = active, `is-enabled` = enabled (starts on boot), `ss` shows `0.0.0.0:8080` LISTEN, `curl /health` ok (`status:ok`, `listening on http://0.0.0.0:8080/`), `curl /metrics` ok, `cargo fmt --check` clean, `cargo test` 98 lib + 106 integration passed. Open-mode env is `/etc/aif/aif.env` defaults (`AIF_PRODUCTION=0`, open); set `AIF_REQUIRE_AUTH=1`/production values there if this host is internet-exposed.
+
+## 2026-10-06 11:41 UTC (session: push to GitHub)
+- **Action:** committed open-mode + service changes (`7845cdf`) and pushed `main` to `origin` (`a6b9bdc..7845cdf`). 10 files, working tree clean after push.
