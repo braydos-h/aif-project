@@ -17,7 +17,10 @@
     historyFilter: { animal_id: "", source: "" },
     animalHistoryPage: 1,
     currentAnimal: null,
+    sessionProbeFailed: false,
   };
+  const animalNames = new Map();
+  let batchPollTimer = null;
 
   function status(message) {
     const el = $("account-status");
@@ -25,6 +28,13 @@
   }
 
   function showView(name) {
+    if (window.aifPages && typeof window.aifPages.navigate === "function") {
+      const paths = { estimator: "/dashboard", login: "/login", invite: "/invite", recovery: "/recover", "recovery-complete": "/reset-password", account: "/settings/profile", "animal-detail": state.currentAnimal ? `/animals/${encodeURIComponent(state.currentAnimal)}` : "/animals" };
+      if (paths[name]) {
+        window.aifPages.navigate(paths[name]);
+        return;
+      }
+    }
     for (const view of document.querySelectorAll(".auth-view")) {
       view.hidden = view.dataset.view !== name;
     }
@@ -100,6 +110,10 @@
     return typeof value === "number" && Number.isFinite(value) ? value.toFixed(1) : "—";
   }
 
+  function jobStatusLabel(statusValue) {
+    return ({ active: "processing", success: "succeeded", failed: "failed", queued: "queued", cancelled: "cancelled", expired: "expired" })[statusValue] || statusValue || "unknown";
+  }
+
   function describeSource(item) {
     if (item.source === "scale") return "scale measurement";
     if (item.placeholder || item.source === "local_fallback") return "offline placeholder";
@@ -111,26 +125,36 @@
 
   async function refreshMe() {
     let data = {};
+    let probeFailed = false;
     try {
       data = await call("GET", "/api/me");
-    } catch (_error) {
-      data = { authenticated: false, auth_required: false };
+    } catch (error) {
+      probeFailed = true;
+      data = { authenticated: false, auth_required: false, session_probe_failed: true };
+      status(apiError(error, "Could not verify your session. Your private data is hidden until the server responds."));
     }
+    const previousUserId = state.user && state.user.id;
+    const nextUserId = data.user && data.user.id;
+    if (previousUserId && previousUserId !== nextUserId) clearPrivateUI();
+    state.sessionProbeFailed = probeFailed;
     state.authenticated = data.authenticated === true;
     state.authRequired = data.auth_required === true;
     state.production = data.production === true;
     state.user = (data.user && typeof data.user === "object") ? data.user : null;
     state.csrf = state.user && typeof state.user.csrf_token === "string" ? state.user.csrf_token : null;
     renderAuthBar();
+    if (window.aifPages && typeof window.aifPages.setAuthState === "function") {
+      window.aifPages.setAuthState({ ...data, authenticated: state.authenticated, auth_required: state.authRequired, user: state.user, session_probe_failed: probeFailed });
+    }
     if (window.aifEstimator && typeof window.aifEstimator.setAuthMode === "function") {
       window.aifEstimator.setAuthMode(state.authenticated, state.authRequired);
     }
     if (state.authenticated) {
-      await Promise.all([loadAnimals(), loadServerHistory(), loadAccountSummary(), loadJobs(), loadPhotos()]);
+      await loadAnimals();
+      await Promise.all([loadServerHistory(), loadAccountSummary(), loadJobs(), loadPhotos()]);
       if (state.user && state.user.role === "operator") await loadOperator();
     } else {
       clearPrivateUI();
-      if (state.authRequired) showView("login");
     }
     return state;
   }
@@ -141,7 +165,7 @@
     bar.replaceChildren();
     const home = document.createElement("a");
     home.className = "auth-link";
-    home.href = "#";
+    home.href = "/dashboard";
     home.textContent = "Estimator";
     home.dataset.nav = "estimator";
     home.addEventListener("click", (event) => {
@@ -158,7 +182,7 @@
       }
       const login = document.createElement("a");
       login.className = "auth-link";
-      login.href = "#login";
+      login.href = "/login";
       login.textContent = "Log in";
       login.dataset.nav = "login";
       login.addEventListener("click", (event) => {
@@ -167,7 +191,7 @@
       });
       const invite = document.createElement("a");
       invite.className = "auth-link";
-      invite.href = "#invite";
+      invite.href = "/invite";
       invite.textContent = "Accept invite";
       invite.dataset.nav = "invite";
       invite.addEventListener("click", (event) => {
@@ -176,7 +200,7 @@
       });
       const recovery = document.createElement("a");
       recovery.className = "auth-link";
-      recovery.href = "#recovery";
+      recovery.href = "/recover";
       recovery.textContent = "Recover access";
       recovery.dataset.nav = "recovery";
       recovery.addEventListener("click", (event) => {
@@ -194,7 +218,7 @@
       who.title = state.user.email;
       const account = document.createElement("a");
       account.className = "auth-link";
-      account.href = "#account";
+      account.href = "/settings/profile";
       account.textContent = "Account";
       account.dataset.nav = "account";
       account.addEventListener("click", (event) => {
@@ -217,12 +241,53 @@
   }
 
   function clearPrivateUI() {
-    for (const id of ["server-history-list", "animal-list", "invite-list", "user-list", "usage-list", "audit-list", "job-list", "photo-list"]) {
+    if (batchPollTimer) window.clearTimeout(batchPollTimer);
+    batchPollTimer = null;
+    for (const id of ["server-history-list", "server-history-pager", "animal-list", "invite-list", "user-list", "usage-list", "usage-wrap", "audit-list", "job-list", "photo-list", "upload-batch-list", "upload-batch-detail-body", "history-detail-body", "animal-detail-body", "dashboard-recent", "dashboard-uploads", "invite-output"]) {
       const el = $(id);
       if (el) el.replaceChildren();
     }
+    if (window.aifEstimator && typeof window.aifEstimator.clearPrivateBatchFiles === "function") {
+      window.aifEstimator.clearPrivateBatchFiles();
+    }
+    animalNames.clear();
+    state.currentAnimal = null;
+    state.historyFilter.animal_id = "";
+    state.historyTotal = 0;
     const summary = $("account-summary");
     if (summary) summary.textContent = "";
+    for (const id of ["dashboard-summary", "server-history-count"]) {
+      const el = $(id);
+      if (el) el.textContent = "";
+    }
+    const animalSelect = $("animal-select");
+    if (animalSelect) {
+      animalSelect.replaceChildren();
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No animal — do not link";
+      animalSelect.append(option);
+    }
+    const historyAnimal = $("history-filter-animal");
+    if (historyAnimal) {
+      historyAnimal.replaceChildren();
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "All animals";
+      historyAnimal.append(option);
+    }
+    for (const id of ["profile-name", "animal-id", "animal-name", "animal-breed", "animal-year", "animal-notes", "scale-weight", "scale-when", "delete-password", "invite-email"]) {
+      const field = $(id);
+      if (field) field.value = "";
+    }
+    for (const id of ["login-password", "invite-password", "recovery-password", "password-current", "password-new", "delete-password"]) {
+      const field = $(id);
+      if (field) field.value = "";
+    }
+    const sex = $("animal-sex");
+    if (sex) sex.value = "";
+    const confirm = $("delete-confirm");
+    if (confirm) confirm.checked = false;
   }
 
   // --- auth forms ------------------------------------------------------
@@ -241,7 +306,8 @@
       $("login-password").value = "";
       status("Logged in.");
       await refreshMe();
-      showView("estimator");
+      const next = new URLSearchParams(window.location.search).get("next");
+      if (!next || !window.aifPages || !window.aifPages.navigate(next)) showView("estimator");
     } catch (error) {
       $("login-password").value = "";
       if (error && error.status === 429) {
@@ -261,13 +327,16 @@
     state.authenticated = false;
     state.user = null;
     state.csrf = null;
+    if (window.aifEstimator && typeof window.aifEstimator.clearPrivateBatchFiles === "function") {
+      window.aifEstimator.clearPrivateBatchFiles();
+    }
     try {
       window.history.replaceState(null, "", window.location.pathname);
     } catch (_error) {
       // Hash cleanup is cosmetic.
     }
     await refreshMe();
-    showView("estimator");
+    showView(state.authRequired ? "login" : "estimator");
     status("Logged out.");
   }
 
@@ -389,6 +458,8 @@
     if (!el || !state.authenticated) return;
     try {
       const data = await call("GET", "/api/account");
+      const profileName = $("profile-name");
+      if (profileName) profileName.value = typeof data.display_name === "string" ? data.display_name : "";
       el.replaceChildren();
       const lines = [
         `Email: ${data.email || ""}`,
@@ -396,7 +467,7 @@
         `Role: ${data.role || ""}`,
         `Animals: ${data.animals ?? 0} · Saved estimates: ${data.estimates ?? 0}`,
         `Today: ${data.today_image_estimates ?? 0} of ${data.daily_limit ?? 0} photo estimates used`,
-        `Photos: ${(typeof data.photo_policy === "string" && data.photo_policy) || "transient-only"}`,
+        `Photos: ${(typeof data.photo_policy === "string" && data.photo_policy) || "Photo policy unavailable"}`,
       ];
       for (const line of lines) {
         const p = document.createElement("p");
@@ -494,6 +565,10 @@
     params.set("per_page", String(state.historyPerPage));
     if (state.historyFilter.animal_id) params.set("animal_id", state.historyFilter.animal_id);
     if (state.historyFilter.source) params.set("source", state.historyFilter.source);
+    const from = $("history-filter-from");
+    const to = $("history-filter-to");
+    if (from && from.value) params.set("from", `${from.value}T00:00:00Z`);
+    if (to && to.value) params.set("to", `${to.value}T23:59:59Z`);
     return params.toString();
   }
 
@@ -536,7 +611,9 @@
     const meta = document.createElement("p");
     meta.className = "small-meta";
     const bits = [];
-    if (item.animal_breed) bits.push(item.animal_breed);
+    const animalName = item.animal_id ? animalNames.get(item.animal_id) : "";
+    if (animalName) bits.push(`animal ${animalName}`);
+    else if (item.animal_breed) bits.push(item.animal_breed);
     if (item.model) bits.push(`model ${item.model}`);
     if (item.estimator_version) bits.push(`estimator ${item.estimator_version}`);
     if (item.prompt_version) bits.push(`prompt ${item.prompt_version}`);
@@ -544,6 +621,11 @@
     meta.textContent = bits.join(" · ");
     li.append(top, meta);
     if (item.id) {
+      const detail = document.createElement("a");
+      detail.className = "auth-link";
+      detail.href = `/history/${encodeURIComponent(item.id)}`;
+      detail.textContent = "View details";
+      li.append(detail);
       const del = document.createElement("button");
       del.type = "button";
       del.className = "secondary-btn";
@@ -610,7 +692,11 @@
       return;
     }
     const link = document.createElement("a");
-    link.href = "/api/history/export?format=csv";
+    const params = new URLSearchParams(historyQuery());
+    params.delete("page");
+    params.delete("per_page");
+    params.set("format", "csv");
+    link.href = `/api/history/export?${params.toString()}`;
     link.download = "cow-weight-history.csv";
     document.body.append(link);
     link.click();
@@ -633,6 +719,8 @@
       status(apiError(error, "Could not load animals."));
       return;
     }
+    animalNames.clear();
+    for (const animal of animals) if (typeof animal.id === "string" && typeof animal.name === "string") animalNames.set(animal.id, animal.name);
     if (list) {
       list.replaceChildren();
       const empty = $("animal-empty");
@@ -670,6 +758,7 @@
       }
       filter.value = previous;
     }
+    document.dispatchEvent(new CustomEvent("aif-animals-loaded"));
   }
 
   function animalRow(animal) {
@@ -741,7 +830,8 @@
     $("animal-notes").value = animal.notes || "";
     $("animal-archived").checked = animal.archived === true;
     $("animal-form-title").textContent = `Edit ${animal.name}`;
-    showView("account");
+    if (window.aifPages) window.aifPages.navigate("/animals");
+    else showView("account");
   }
 
   async function doSaveAnimal(event) {
@@ -786,10 +876,62 @@
   }
 
   async function viewAnimal(id) {
+    if (window.aifPages) {
+      window.aifPages.navigate(`/animals/${encodeURIComponent(id)}`);
+      return;
+    }
+    await viewAnimalPage(id, true);
+  }
+
+  async function viewAnimalPage(id, fromRoute) {
     state.currentAnimal = id;
     state.animalHistoryPage = 1;
     await loadAnimalDetail();
-    showView("animal-detail");
+    if (!fromRoute && window.aifPages) window.aifPages.navigate(`/animals/${encodeURIComponent(id)}`);
+  }
+
+  async function loadHistoryDetail(id) {
+    const wrap = $("history-detail-body");
+    if (!wrap) return;
+    wrap.replaceChildren();
+    try {
+      const item = await call("GET", `/api/history/${encodeURIComponent(id)}`);
+      const title = document.createElement("p");
+      title.className = "answer";
+      title.textContent = `${fmtKg(item.weight_kg)} kg`;
+      const range = document.createElement("p");
+      range.textContent = `Estimated range ${fmtKg(item.weight_min_kg)}–${fmtKg(item.weight_max_kg)} kg`;
+      const details = document.createElement("dl");
+      const pairs = [
+        ["Method", describeSource(item)], ["Date", fmtDate(item.measured_at || item.created_at)],
+        ["Animal", (item.animal_id && animalNames.get(item.animal_id)) || item.animal_breed || "Not linked"], ["Model", item.model || "Not recorded"],
+        ["Estimator version", item.estimator_version || "Not recorded"],
+        ["Prompt version", item.prompt_version || "Not recorded"],
+        ["Request id", item.request_id || "Not recorded"],
+      ];
+      for (const [label, value] of pairs) {
+        const dt = document.createElement("dt");
+        dt.textContent = label;
+        const dd = document.createElement("dd");
+        dd.textContent = String(value);
+        details.append(dt, dd);
+      }
+      wrap.append(title, range, details);
+      if (item.disclaimer) {
+        const note = document.createElement("p");
+        note.className = "note";
+        note.textContent = item.disclaimer;
+        wrap.append(note);
+      }
+      if (item.placeholder || item.source === "local_fallback") {
+        const warning = document.createElement("p");
+        warning.className = "warning-note";
+        warning.textContent = "Offline placeholder — this is not an AI estimate.";
+        wrap.append(warning);
+      }
+    } catch (error) {
+      wrap.textContent = apiError(error, "Could not load that estimate.");
+    }
   }
 
   async function loadAnimalDetail() {
@@ -880,12 +1022,250 @@
     }
   }
 
+  async function loadUploadBatches() {
+    const list = $("upload-batch-list");
+    if (!list || !state.authenticated) return;
+    list.replaceChildren();
+    const empty = $("upload-batch-empty");
+    try {
+      const data = await call("GET", "/api/upload-batches");
+      const batches = Array.isArray(data.batches) ? data.batches : [];
+      if (empty) empty.hidden = batches.length > 0;
+      for (const batch of batches) {
+        const li = document.createElement("li");
+        const link = document.createElement("a");
+        link.className = "auth-link";
+        link.href = `/uploads/${encodeURIComponent(batch.id)}`;
+        link.textContent = `Batch ${String(batch.id).slice(0, 8)} · ${batch.status || "pending"}`;
+        const meta = document.createElement("p");
+        meta.className = "small-meta";
+        meta.textContent = `${batch.succeeded_count ?? 0} succeeded · ${batch.failed_count ?? 0} failed · ${batch.submitted_count ?? 0} of ${batch.expected_count ?? 0} submitted · ${fmtDate(batch.created_at)}`;
+        li.append(link, meta);
+        list.append(li);
+      }
+    } catch (error) {
+      if (empty) { empty.hidden = false; empty.textContent = apiError(error, "Could not load upload batches."); }
+    }
+  }
+
+  async function loadUploadBatch(id) {
+    if (batchPollTimer) window.clearTimeout(batchPollTimer);
+    batchPollTimer = null;
+    const wrap = $("upload-batch-detail-body");
+    if (!wrap) return;
+    wrap.replaceChildren();
+    try {
+      const batch = await call("GET", `/api/upload-batches/${encodeURIComponent(id)}`);
+      const summary = document.createElement("p");
+      summary.className = "note";
+      summary.textContent = `${batch.status} · ${batch.succeeded_count ?? 0} succeeded · ${batch.failed_count ?? 0} failed · ${batch.cancelled_count ?? 0} cancelled · ${batch.submitted_count ?? 0} of ${batch.expected_count ?? 0} submitted.`;
+      if ((batch.submitted_count ?? 0) < (batch.expected_count ?? 0)) {
+        const missing = document.createElement("p");
+        missing.className = "note";
+        missing.textContent = "Some selected photos did not reach the server. Select those photos again to submit them.";
+        wrap.append(missing);
+      }
+      const list = document.createElement("ul");
+      for (const item of Array.isArray(batch.items) ? batch.items : []) {
+        const li = document.createElement("li");
+        const title = document.createElement("strong");
+        title.textContent = `${item.filename || "Photo"} · ${jobStatusLabel(item.status)}`;
+        const detail = document.createElement("p");
+        detail.className = "small-meta";
+        const weight = item.result && typeof item.result.estimated_weight_kg === "number" ? `${fmtKg(item.result.estimated_weight_kg)} kg` : "";
+        const source = item.result && typeof item.result.source === "string" ? item.result.source : "";
+        detail.textContent = [weight, source, item.error_message, `attempts ${item.attempts ?? 0}`].filter(Boolean).join(" · ");
+        li.append(title, detail);
+        if (item.history_id) {
+          const link = document.createElement("a");
+          link.className = "auth-link";
+          link.href = `/history/${encodeURIComponent(item.history_id)}`;
+          link.textContent = "Open saved result";
+          li.append(link);
+        }
+        const retryable = ["failed", "cancelled", "expired"].includes(item.status);
+        if (item.status === "success" && window.aifEstimator && typeof window.aifEstimator.forgetBatchItem === "function") {
+          window.aifEstimator.forgetBatchItem(id, item.index);
+        }
+        if (retryable && window.aifEstimator && window.aifEstimator.canRetryBatchItem(id, item.index)) {
+          const retry = document.createElement("button");
+          retry.type = "button";
+          retry.className = "secondary-btn";
+          retry.textContent = "Retry this photo";
+          retry.addEventListener("click", async () => {
+            retry.disabled = true;
+            retry.textContent = "Retrying…";
+            try {
+              await window.aifEstimator.retryBatchItem(id, item.index);
+              await loadUploadBatch(id);
+            } catch (error) {
+              status(error instanceof Error ? error.message : "Could not retry this photo.");
+              retry.disabled = false;
+              retry.textContent = "Retry this photo";
+            }
+          });
+          li.append(retry);
+        } else if (retryable) {
+          const unavailable = document.createElement("p");
+          unavailable.className = "small-meta";
+          unavailable.textContent = "The photo is no longer available in this tab. Reselect it to submit a new attempt.";
+          li.append(unavailable);
+        }
+        list.append(li);
+      }
+      wrap.append(summary, list);
+      const retryableItems = (Array.isArray(batch.items) ? batch.items : []).filter((item) =>
+        ["failed", "cancelled", "expired"].includes(item.status)
+        && window.aifEstimator && window.aifEstimator.canRetryBatchItem(id, item.index));
+      if (retryableItems.length > 1) {
+        const retryFailed = document.createElement("button");
+        retryFailed.type = "button";
+        retryFailed.className = "secondary-btn";
+        retryFailed.textContent = `Retry ${retryableItems.length} failed photos`;
+        retryFailed.addEventListener("click", async () => {
+          retryFailed.disabled = true;
+          retryFailed.textContent = "Retrying failed photos…";
+          const outcomes = await Promise.allSettled(retryableItems.map((item) => window.aifEstimator.retryBatchItem(id, item.index)));
+          const failed = outcomes.filter((result) => result.status === "rejected").length;
+          status(failed ? `${failed} photo${failed === 1 ? "" : "s"} could not be retried; review each item.` : "Failed photos requeued.");
+          await loadUploadBatch(id);
+        });
+        wrap.append(retryFailed);
+      }
+      if (batch.items && batch.items.some((item) => item.status === "queued")) {
+        const cancelNote = document.createElement("p");
+        cancelNote.className = "note";
+        cancelNote.textContent = "Cancelling removes pending photos. Active inference may finish and its result can still be saved.";
+        wrap.append(cancelNote);
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "secondary-btn";
+        cancel.textContent = "Cancel pending photos";
+        cancel.addEventListener("click", async () => {
+          try {
+            await call("POST", `/api/upload-batches/${encodeURIComponent(id)}/cancel`, {});
+            await loadUploadBatch(id);
+          } catch (error) { status(apiError(error, "Could not cancel pending photos.")); }
+        });
+        wrap.append(cancel);
+      }
+      if (batch.items && batch.items.some((item) => item.status === "queued" || item.status === "active")) {
+        batchPollTimer = window.setTimeout(() => {
+          if (window.location.pathname === `/uploads/${encodeURIComponent(id)}`) void loadUploadBatch(id);
+        }, 2500);
+      }
+    } catch (error) {
+      if (error && error.status === 404) {
+        try {
+          const job = await call("GET", `/api/jobs/${encodeURIComponent(id)}`);
+          const heading = document.createElement("h3");
+          heading.textContent = `Background estimate · ${jobStatusLabel(job.status)}`;
+          const meta = document.createElement("p");
+          meta.className = "small-meta";
+          meta.textContent = [job.filename, `created ${fmtDate(job.created_at)}`, `attempts ${job.attempts ?? 0}`, job.error_message].filter(Boolean).join(" · ");
+          wrap.append(heading, meta);
+          if (job.result && typeof job.result.estimated_weight_kg === "number") {
+            const result = document.createElement("p");
+            result.className = "answer";
+            result.textContent = `${fmtKg(job.result.estimated_weight_kg)} kg · ${fmtKg(job.result.weight_min_kg)}–${fmtKg(job.result.weight_max_kg)} kg range`;
+            wrap.append(result);
+            if (job.result.history_id) {
+              const link = document.createElement("a");
+              link.className = "auth-link";
+              link.href = `/history/${encodeURIComponent(job.result.history_id)}`;
+              link.textContent = "Open saved result";
+              wrap.append(link);
+            }
+          }
+        } catch (jobError) {
+          wrap.textContent = apiError(jobError, "Could not load this upload or job.");
+        }
+      } else {
+        wrap.textContent = apiError(error, "Could not load this upload batch.");
+      }
+    }
+  }
+
+  async function loadDashboard() {
+    const summary = $("dashboard-summary");
+    const recent = $("dashboard-recent");
+    const uploads = $("dashboard-uploads");
+    if (!state.authenticated) return;
+    try {
+      const account = await call("GET", "/api/account");
+      if (summary) summary.textContent = `${account.animals ?? 0} animals · ${account.estimates ?? 0} saved estimates · ${account.today_image_estimates ?? 0} of ${account.daily_limit ?? 0} photo estimates used today.`;
+      const [history, batchData, jobData] = await Promise.all([
+        call("GET", "/api/history?page=1&per_page=5"),
+        call("GET", "/api/upload-batches"),
+        call("GET", "/api/jobs"),
+      ]);
+      const historyItems = Array.isArray(history.items) ? history.items : [];
+      if (recent) {
+        recent.replaceChildren();
+        for (const item of historyItems) {
+          const row = document.createElement("li");
+          const link = document.createElement("a");
+          link.href = `/history/${encodeURIComponent(item.id)}`;
+          link.textContent = `${fmtKg(item.weight_kg)} kg · ${describeSource(item)} · ${fmtDate(item.measured_at || item.created_at)}`;
+          row.append(link);
+          recent.append(row);
+        }
+      }
+      const recentEmpty = $("dashboard-recent-empty");
+      if (recentEmpty) recentEmpty.hidden = historyItems.length > 0;
+      const activeBatches = (Array.isArray(batchData.batches) ? batchData.batches : []).filter((batch) => batch.status === "processing" || batch.status === "pending");
+      const activeJobs = (Array.isArray(jobData.jobs) ? jobData.jobs : []).filter((job) => !job.batch_id && (job.status === "queued" || job.status === "active"));
+      if (uploads) {
+        uploads.replaceChildren();
+        for (const batch of activeBatches) {
+          const row = document.createElement("li");
+          const link = document.createElement("a");
+          link.href = `/uploads/${encodeURIComponent(batch.id)}`;
+          link.textContent = `Batch ${String(batch.id).slice(0, 8)} · ${batch.status} · ${batch.submitted_count ?? 0} of ${batch.expected_count ?? 0} photos`;
+          row.append(link);
+          uploads.append(row);
+        }
+        for (const job of activeJobs) {
+          const row = document.createElement("li");
+          const link = document.createElement("a");
+          link.href = `/uploads/${encodeURIComponent(job.id)}`;
+          link.textContent = `Job ${String(job.id).slice(0, 8)} · ${jobStatusLabel(job.status)}`;
+          row.append(link);
+          uploads.append(row);
+        }
+      }
+      const uploadEmpty = $("dashboard-uploads-empty");
+      if (uploadEmpty) uploadEmpty.hidden = activeBatches.length + activeJobs.length > 0;
+    } catch (error) {
+      if (summary) summary.textContent = apiError(error, "Could not load the dashboard.");
+    }
+  }
+
+  async function loadForRoute(path) {
+    if (!state.authenticated) return;
+    const batchDetail = path.match(/^\/uploads\/([A-Za-z0-9_-]{1,64})$/);
+    if (batchDetail) return loadUploadBatch(batchDetail[1]);
+    const animalDetail = path.match(/^\/animals\/([A-Za-z0-9_-]{1,64})$/);
+    if (animalDetail) return viewAnimalPage(animalDetail[1], true);
+    const historyDetail = path.match(/^\/history\/([A-Za-z0-9_-]{1,64})$/);
+    if (historyDetail) { await loadAnimals(); return loadHistoryDetail(historyDetail[1]); }
+    if (path === "/dashboard") return loadDashboard();
+    else if (path === "/settings/profile") await Promise.all([loadAccountSummary(), loadAnimals()]);
+    else if (path === "/settings/security") await loadAccountSummary();
+    else if (path === "/settings/privacy") await Promise.all([loadAccountSummary(), loadPhotos()]);
+    else if (path === "/animals") await loadAnimals();
+    else if (path === "/history") { await loadAnimals(); await loadServerHistory(); }
+    else if (path === "/uploads") await Promise.all([loadJobs(), loadUploadBatches()]);
+    else if (path === "/photos") await loadPhotos();
+    else if (path.startsWith("/operator") && state.user && state.user.role === "operator") await loadOperator();
+  }
+
   function jobRow(job) {
     const li = document.createElement("li");
     const title = document.createElement("strong");
     const id = typeof job.id === "string" ? job.id : "";
     const short = id ? id.slice(0, 8) : "job";
-    title.textContent = `Job ${short} · ${job.status || "unknown"}`;
+    title.textContent = `Job ${short} · ${jobStatusLabel(job.status)}`;
     const meta = document.createElement("p");
     meta.className = "small-meta";
     const bits = [`created ${fmtDate(job.created_at)}`];
@@ -1161,7 +1541,31 @@
 
   function bind(id, event, handler) {
     const el = $(id);
-    if (el) el.addEventListener(event, handler);
+    if (!el) return;
+    if (event !== "submit") {
+      el.addEventListener(event, handler);
+      return;
+    }
+    el.addEventListener(event, async (formEvent) => {
+      const buttons = Array.from(el.querySelectorAll('button[type="submit"], input[type="submit"]'));
+      const original = buttons.map((button) => ({ button, text: button.textContent }));
+      for (const { button } of original) {
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+        if (button.tagName === "BUTTON") button.textContent = "Please wait…";
+      }
+      el.setAttribute("aria-busy", "true");
+      try {
+        await handler(formEvent);
+      } finally {
+        el.removeAttribute("aria-busy");
+        for (const { button, text } of original) {
+          button.disabled = false;
+          button.removeAttribute("aria-busy");
+          if (button.tagName === "BUTTON") button.textContent = text;
+        }
+      }
+    });
   }
 
   function init() {
@@ -1184,7 +1588,7 @@
       $("animal-id").value = "";
       $("animal-form-title").textContent = "Add an animal";
     });
-    bind("back-to-account", "click", () => showView("account"));
+    bind("back-to-account", "click", () => window.aifPages ? window.aifPages.navigate("/animals") : showView("account"));
     document.addEventListener("aif-estimate-saved", onEstimateSaved);
     document.addEventListener("aif-jobs-changed", () => {
       if (state.authenticated) void loadJobs();
@@ -1202,6 +1606,10 @@
     refresh: refreshMe,
     isLoggedIn: () => state.authenticated,
     csrf: () => state.csrf,
+    loadForRoute,
+    viewAnimal: viewAnimalPage,
+    viewHistory: loadHistoryDetail,
+    viewUploadBatch: loadUploadBatch,
   };
 
   if (document.readyState === "loading") {

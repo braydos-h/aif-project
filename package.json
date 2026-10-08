@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "test:browser": "node --test web/tests/journeys.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.0"
+  }
+}

@@ -34,6 +34,9 @@ fn job_json(job: &crate::db::Job) -> Value {
         "error_code": job.error_code,
         "error_message": job.error_message,
         "history_id": job.history_id,
+        "batch_id": job.batch_id,
+        "batch_index": job.batch_index,
+        "filename": job.filename,
         "result": result,
     })
 }
@@ -88,7 +91,7 @@ pub(crate) fn handle_create(
         )
         .with_policy(state.config.production);
     }
-    let payload = match need_json(state, body, request_id) {
+    let mut payload = match need_json(state, body, request_id) {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -107,13 +110,93 @@ pub(crate) fn handle_create(
         .get("idempotency_key")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty());
-    if let Some(k) = key {
+    let key = key.map(str::to_string);
+    if let Some(k) = key.as_deref() {
         if let Err(message) = super::estimate::validate_idempotency_key(k) {
             return Response::json(
                 400,
                 error_json(super::response::CODE_INVALID_OPTIONS, &message, request_id),
             )
             .with_policy(state.config.production);
+        }
+    }
+    let batch_id = payload
+        .get("batch_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let batch_index = payload.get("batch_index").and_then(Value::as_i64);
+    let filename = payload
+        .get("filename")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    if batch_id.is_some() != batch_index.is_some() || batch_id.is_some() != filename.is_some() {
+        return Response::json(
+            400,
+            error_json(
+                super::response::CODE_INVALID_OPTIONS,
+                "batch_id, batch_index, and filename must be supplied together",
+                request_id,
+            ),
+        )
+        .with_policy(state.config.production);
+    }
+    let filename = if let Some(name) = filename {
+        let base = name.rsplit(['/', '\\']).next().unwrap_or("").trim();
+        if base.is_empty() || base.chars().count() > 128 || base.chars().any(char::is_control) {
+            return Response::json(
+                400,
+                error_json(
+                    super::response::CODE_INVALID_OPTIONS,
+                    "Invalid batch filename",
+                    request_id,
+                ),
+            )
+            .with_policy(state.config.production);
+        }
+        Some(base.to_string())
+    } else {
+        None
+    };
+    if let Some(key) = key.as_deref() {
+        match state.db.job_by_idempotency_key(&requester.user.id, key) {
+            Ok(Some(job)) => {
+                let same_item = match (batch_id.as_deref(), batch_index, filename.as_deref()) {
+                    (Some(batch), Some(index), Some(name)) => {
+                        job.batch_id.as_deref() == Some(batch)
+                            && job.batch_index == Some(index)
+                            && job.filename.as_deref() == Some(name)
+                    }
+                    (None, None, None) => job.batch_id.is_none() && job.batch_index.is_none(),
+                    _ => false,
+                };
+                if !same_item {
+                    return Response::json(
+                        400,
+                        error_json(
+                            super::response::CODE_INVALID_OPTIONS,
+                            "Idempotency key is already used for another job item",
+                            request_id,
+                        ),
+                    )
+                    .with_policy(state.config.production);
+                }
+                let mut out = job_json(&job);
+                out["replayed"] = Value::from(true);
+                return Response::json(202, with_request_id(out, request_id))
+                    .with_policy(state.config.production);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                return Response::json(
+                    502,
+                    error_json(
+                        super::response::CODE_ESTIMATION_FAILED,
+                        "Could not check the job idempotency key",
+                        request_id,
+                    ),
+                )
+                .with_policy(state.config.production);
+            }
         }
     }
     match state.db.open_job_count(&requester.user.id) {
@@ -142,13 +225,34 @@ pub(crate) fn handle_create(
         _ => {}
     }
     let now = rfc3339(unix_now());
-    match state.db.create_job(
-        &new_id(),
-        &requester.user.id,
-        key,
-        &payload.to_string(),
-        &now,
-    ) {
+    let object = payload.as_object_mut().expect("object checked above");
+    object.remove("batch_id");
+    object.remove("batch_index");
+    object.remove("filename");
+    let payload_text = payload.to_string();
+    let created = match (batch_id.as_deref(), batch_index, filename.as_deref()) {
+        (Some(batch), Some(index), Some(name)) => state.db.create_batch_job(
+            &new_id(),
+            &requester.user.id,
+            crate::db::BatchJobMetadata {
+                batch_id: batch,
+                batch_index: index,
+                filename: name,
+            },
+            key.as_deref(),
+            &payload_text,
+            &now,
+        ),
+        (None, None, None) => state.db.create_job(
+            &new_id(),
+            &requester.user.id,
+            key.as_deref(),
+            &payload_text,
+            &now,
+        ),
+        _ => unreachable!("batch metadata checked above"),
+    };
+    match created {
         Ok((id, replayed)) => {
             state.audit(
                 Some(&requester.user.id),
@@ -164,11 +268,31 @@ pub(crate) fn handle_create(
             Response::json(202, with_request_id(out, request_id))
                 .with_policy(state.config.production)
         }
-        Err(_) => Response::json(
-            502,
+        Err(error) => Response::json(
+            if error.contains("not found")
+                || error.contains("another item")
+                || error.contains("already submitted")
+                || error.contains("out of range")
+            {
+                400
+            } else {
+                502
+            },
             error_json(
-                super::response::CODE_ESTIMATION_FAILED,
-                "Could not queue the job",
+                if error.contains("not found")
+                    || error.contains("another item")
+                    || error.contains("already submitted")
+                    || error.contains("out of range")
+                {
+                    super::response::CODE_INVALID_OPTIONS
+                } else {
+                    super::response::CODE_ESTIMATION_FAILED
+                },
+                if error.contains("not found") {
+                    "Upload batch is unavailable"
+                } else {
+                    &error
+                },
                 request_id,
             ),
         )

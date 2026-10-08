@@ -1,0 +1,56 @@
+/* Shared navigation, route pages, and responsive application shell. */
+[hidden] { display: none !important; }
+
+#site-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+#site-navigation a,
+.route-page a,
+.dashboard-card {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+#site-navigation a { display: inline-flex; align-items: center; padding: 8px 12px; font-weight: 650; }
+#site-navigation a[aria-current="page"] { border-color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
+#site-navigation a:hover, .dashboard-card:hover { border-color: var(--accent); }
+#mobile-menu-toggle { display: none; }
+.service-status { padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.route-slice, .route-page, .account-route-group { display: grid; gap: 10px; }
+.route-slice[hidden], .route-page[hidden], .account-route-group[hidden] { display: none !important; }
+.route-slice > h2:first-child, .route-page > h2:first-child, .account-route-group > h2:first-child { margin-top: 0; }
+.account-route-group { width: 100%; }
+.dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.dashboard-card { display: grid; align-content: start; gap: 4px; padding: 16px; }
+.dashboard-card span { color: var(--muted); font-size: .92rem; }
+.dashboard-summary { min-height: 1.5em; color: var(--muted); }
+.password-toggle { justify-self: start; min-height: 40px; padding: 8px 12px; }
+body[data-route="/login"] main { width: min(32rem, calc(100% - 32px)); }
+body[data-route="/login"] #page-content { padding: 16px; border: 1px solid var(--line); border-radius: calc(var(--radius) + 4px); background: var(--surface); }
+body[data-route="/login"] #page-content h2 { margin-top: 0; }
+#upload-batch-list, #job-list, #upload-batch-detail-body ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+#upload-batch-list li, #job-list li, #upload-batch-detail-body li { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); min-width: 0; }
+.route-page { padding: 4px 0; }
+.route-page > nav { display: flex; flex-wrap: wrap; gap: 8px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+
+@media (max-width: 700px) {
+  #mobile-menu-toggle { display: inline-flex; min-height: 44px; }
+  #site-navigation { display: none; padding: 8px 0; }
+  #site-navigation.open { display: flex; }
+  #site-navigation a { flex: 1 1 42%; }
+  .dashboard-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}

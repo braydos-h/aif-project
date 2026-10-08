@@ -18,11 +18,12 @@ WebUI in a browser.
 
 Important paths:
 
-- `web/index.html`, `web/styles.css`, `web/app.js` — browser UI.
+- `web/index.html`, `web/styles.css`, `web/pages.css`, `web/router.js`, `web/app.js`, `web/account.js` — browser UI and direct page routes.
 - `backend/src/http/` — threaded HTTP/1.1 server (`server.rs` listener loop,
   `mod.rs` dispatch, `response.rs` envelopes/headers, `request_id.rs`,
   `assets.rs` static/demo registry, `validation.rs` runtime option checks,
-  `handlers.rs` info/demo/metrics routes, `estimate.rs` estimator API).
+  `handlers.rs` info/demo/metrics routes, `estimate.rs` estimator API,
+  `upload_batches.rs` owner-scoped batch tracking and retries).
 - `backend/src/config/` — defaults and `Config` (`mod.rs`), `.env` loading
   (`env.rs`), unit conversion (`units.rs`).
 - `backend/src/validate/` — image references (`mod.rs`), base64 codec
@@ -50,12 +51,15 @@ The server routes are:
 
 - `GET /` → WebUI HTML.
 - `GET /styles.css`, `GET /app.js` → compile-time static assets.
+- `GET /router.js`, `/pages.css`, `/account.js`, `/account.css` → compiled app-shell assets.
+- Explicit UI routes: `/login`, `/invite`, `/recover`, `/reset-password`, `/dashboard`, `/estimate/{photo,batch,tape}`, `/uploads`, `/history`, `/animals`, `/photos`, `/settings/{profile,security,privacy}`, `/operator/{invites,users,activity}`, `/help`, and `/privacy`.
 - `GET /info` → safe application/configuration JSON; never return an API key.
 - `GET /health` → liveness, backend, model, uptime, and live connections.
 - `GET /metrics` → uptime, request totals, live/rejected connections, cache size.
 - `GET /demo-cows`, `GET /demo-cows/{id}` → controlled bundled demo images.
 - `POST /estimate-weight` → single estimate (photo, tape, or both).
 - `POST /estimate-batch` → up to 20 estimates in one request.
+- Owner-scoped `/api/upload-batches` endpoints group the existing jobs API into batches with list, detail, cancel-pending, and retry operations.
 - `OPTIONS` → CORS preflight; unknown routes return structured 404 JSON;
   over-limit bursts return structured 503 `server_busy` JSON.
 
@@ -63,6 +67,12 @@ Static and demo routes are explicit. Never add arbitrary filesystem serving or
 build a filesystem path from a URL segment. Keep the existing body limit,
 image validation, request IDs, CORS headers, meaningful error codes, and
 header-safe responses.
+
+Synchronous photo estimates are processed in memory. Background job request
+payloads temporarily live in SQLite until terminal state, when they are
+cleared. `deploy/backup.sh` expires queued work and clears every job payload
+from the snapshot before encryption; do not describe all photo uploads as
+disk-free while background jobs are enabled.
 
 The estimate request accepts the existing `image_url`, `image_base64`, and
 `prompt` fields plus optional `backend`, `model`, `ollama_url`,

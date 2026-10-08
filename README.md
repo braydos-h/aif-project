@@ -73,10 +73,20 @@ The browser app supports:
 - live status updates, backend health badge polled every 30 seconds with
   offline detection, dark-mode support, and a responsive single-column
   layout.
+- direct, refreshable pages for login/invites/recovery, dashboard, photo,
+  batch and tape estimates, upload tracking, history, animals, photos,
+  settings, operator controls, Help, and Privacy; shared desktop and mobile
+  navigation supports browser Back/Forward.
+- logged-in background batches of up to 20 photos, with owner-scoped batch
+  records, per-photo animal links, queue-aware submissions, reconnectable
+  results, cancellation of pending work, and retries while the photo remains
+  available in the current tab.
 
-Selected files are not uploaded until **Estimate Weight** is pressed. Backend,
-model, and prompt come from the server defaults. The browser stores nothing —
-no `localStorage`, no API keys, no base64 images in history. Dynamic text is
+Selected files are not uploaded until an estimate action is pressed. Backend,
+model, and prompt come from the server defaults. The browser does not persist
+photos or credentials in Web Storage; retryable files and base64 request bodies
+stay in memory only for the current tab. Background requests are temporarily
+stored in SQLite while queued and cleared at terminal status. Dynamic text is
 rendered as text, not HTML.
 
 When the server requires authentication (`AIF_REQUIRE_AUTH=1`, always in
@@ -89,7 +99,7 @@ operator-relayed invite/recovery flow.
 ## Architecture
 
 ```text
-web/index.html, styles.css, app.js
+web/index.html, router.js, pages.css, app.js, account.js
               │ same-origin fetch
               ▼
 Rust aif-backend ── /estimate-weight ── Ollama Cloud or local fallback
@@ -113,6 +123,8 @@ and the tests are all Rust (plus plain browser HTML/CSS/JavaScript).
 | `GET` | `/app.js` | WebUI JavaScript |
 | `GET` | `/account.js` | Account/history/animals/operator JavaScript |
 | `GET` | `/account.css` | Account stylesheet |
+| `GET` | `/router.js` | Explicit browser route shell and navigation |
+| `GET` | `/pages.css` | Responsive page-shell stylesheet |
 | `GET` | `/api/me` | Session probe (`authenticated`, `auth_required`, CSRF token) |
 | `POST` | `/api/auth/login` | Password login (rate-limited, generic failures) |
 | `POST` | `/api/auth/logout` | Revoke the current session |
@@ -141,6 +153,11 @@ and the tests are all Rust (plus plain browser HTML/CSS/JavaScript).
 | `GET` | `/api/jobs` | List your jobs, newest first |
 | `GET` | `/api/jobs/{id}` | Job status + result when successful (others' ids 404) |
 | `POST` | `/api/jobs/{id}/cancel` | Cancel a queued job |
+| `POST` | `/api/upload-batches` | Create an owner-scoped batch record (`item_count` 1–20) |
+| `GET` | `/api/upload-batches` | List the caller's batches and item states |
+| `GET` | `/api/upload-batches/{id}` | Owner-only batch results and saved estimate links |
+| `POST` | `/api/upload-batches/{id}/cancel` | Cancel queued items; active inference may finish |
+| `POST` | `/api/upload-batches/{id}/items/{index}/retry` | Retry a terminal item with its original key and a fresh client photo |
 | `POST` | `/api/operator/invites` | Mint an invite (operator; one-time link in response) |
 | `GET` | `/api/operator/invites` | Invite list with status |
 | `POST` | `/api/operator/invites/{id}/revoke` | Revoke an unused invite |
@@ -181,6 +198,10 @@ until `success` (result embedded) or `failed` (`error_code` set).
 Transient 429/502/503 outcomes retry with bounded backoff (3 attempts);
 only queued jobs can be cancelled. A restart requeues interrupted jobs
 and idempotency guarantees each completed result is saved once.
+Batch requests group those jobs in owner-scoped `/api/upload-batches` records.
+Each item keeps a stable idempotency key when retried unchanged. A different
+photo or edited estimate inputs needs a new attempt. Photos that did not reach
+the server must be selected again after a reload.
 
 ### `POST /estimate-weight`
 

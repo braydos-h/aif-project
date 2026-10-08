@@ -25,7 +25,7 @@ password change, pause, exports, deletions) are appended to the audit log
 | Uptime | External check on `https://<domain>/health` (expects `{"status":"ok"}`); systemd `Restart=always` + `journalctl -u aif-backend`. |
 | Provider failures | `journalctl` for `estimation failed`; operator `/api/operator/usage` and audit; `provider_errors` alert in `/api/operator/status` at 5+/hour. |
 | Usage spikes | `usage_high` alert in `/api/operator/status` at 80% of `AIF_DAILY_LIMIT`; shown in the operator panel. |
-| Disk capacity | Alert on `/var/lib/aif` and `/var/backups/aif` (`disk_high` alert in status past `AIF_DISK_ALERT_MB`; DB rows plus any retained photos under `<data_dir>/photos`). |
+| Disk capacity | Alert on `/var/lib/aif` and `/var/backups/aif` (`disk_high` alert in status past `AIF_DISK_ALERT_MB`; SQLite includes temporary pending-job payloads plus estimate metadata and optional retained photos under `<data_dir>/photos`). |
 | Certificate expiry | Caddy renews automatically; the `email` in the Caddyfile gets expiry alerts. Verify with `curl -vI https://<domain>`. |
 | Provider spending | `AIF_DAILY_LIMIT` per user + `AIF_MAX_INFERENCE` concurrency + bounded single retry; pause inference from the operator panel (`POST /api/operator/pause`). Unexpected traffic answers 429/503, never unbounded inference. |
 
@@ -39,8 +39,11 @@ AIF_BACKUP_PASSPHRASE=... sh /opt/aif/deploy/backup.sh /var/lib/aif /var/backups
 Each run takes an online-safe SQLite snapshot, packs it with a timestamp,
 encrypts with AES-256-CBC (PBKDF2), keeps the newest 14, and prints a
 reminder to copy the file **off-server** (scp/rsync to encrypted
-storage). Local copies do not survive host loss. Photo backups are
-unneeded: the service stores no photos.
+storage). Local copies do not survive host loss. Background photo payloads
+are temporarily stored in the jobs table while pending; before encryption,
+the backup snapshot marks queued/active jobs expired and clears all job
+payloads. Estimate metadata is retained in history, but queued photos are not
+recoverable from backups.
 
 Retention: 14 daily encrypted copies off-server (database only —
 retained photos in `<data_dir>/photos` are excluded; back that dir up

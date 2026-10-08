@@ -2,7 +2,7 @@
 
 Goal: host Cow Weight Estimator on a domain so two invited users can use it remotely on their phones. The address is internet-accessible; accounts, estimates, photos, and history are private. There is no public registration.
 
-Planning only. Implement roughly in numbered order, respecting dependencies; item 18 is an estimate-quality gate to complete before item 17 launches the service. Login screens are item 1; database and authentication follow in items 2 and 3. Animal records are optional; photo retention and durable jobs depend on the recorded product decisions. No billing, native app, public signup, or large-scale infrastructure is required.
+This is the running implementation and launch tracker, not a planning-only list. Repo-side work is checked only when code and automated evidence exist; domain, staging, restore, device, and real-data gates stay open until their evidence is recorded. Item 18 remains an estimate-quality gate before launch. The full app completion evidence matrix is [19-full-app-completion.md](19-full-app-completion.md).
 
 ## Ordered tasks
 
@@ -25,6 +25,7 @@ Planning only. Implement roughly in numbered order, respecting dependencies; ite
 - [ ] [16. Tests, staging, and release checks](16-tests-and-release.md)
 - [ ] [17. Two-user launch checklist](17-launch.md)
 - [ ] [18. Estimate quality and user guidance](18-estimate-quality.md)
+- [ ] [19. Full app completion and acceptance evidence](19-full-app-completion.md)
 
 Preserve the Rust backend, plain browser frontend, local launch path, explicit static routes, image validation, request limits, request IDs, safe DOM rendering, secret redaction, and estimate disclaimers.
 

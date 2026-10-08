@@ -7,7 +7,7 @@
 - [x] Provide minimal protected operator controls for invitations, revocation, usage, and pausing inference.
 - [x] Log security-sensitive actions and request IDs without photos, credentials, private prompts, or reset tokens.
 - [x] Monitor uptime, provider failures, disk capacity, certificate expiry, and spending. (Guidance + endpoints in docs/operations.md; external uptime checker to be configured on the live host.)
-- [x] Automate encrypted off-server database/photo backups with defined retention. (deploy/backup.sh: online-safe snapshot, AES-256-CBC/PBKDF2, 14-copy retention; photos need no backup by transient-only decision.)
+- [x] Automate encrypted off-server database backups with defined retention. (deploy/backup.sh: online-safe snapshot, encrypted output, 14-copy retention; queued/active jobs are expired and every job payload is cleared in the snapshot. Opt-in retained photo files are excluded.)
 - [ ] Perform a restore drill and document updates, rollback, outages, credential compromise, and operator recovery.
 
 - [x] Document provider-key rotation, dependency/model update review, and expiry or payment failures for the domain, host, and provider account.

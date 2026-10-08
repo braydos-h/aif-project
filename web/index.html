@@ -8,34 +8,68 @@
   <title>Cow Weight Estimator</title>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/account.css">
+  <link rel="stylesheet" href="/pages.css">
+  <script src="/router.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/account.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#estimate-button">Skip to estimator</a>
+  <a class="skip-link" href="#page-content">Skip to page content</a>
   <main>
     <h1>Cow Weight Estimator</h1>
-    <p class="note">Upload cow photos to get a weight estimate. Use a verified scale for purchase, dosing, or official records.</p>
+    <p class="note" id="site-tagline">Private cattle records and weight estimates for invited users.</p>
+    <button id="mobile-menu-toggle" type="button" class="secondary-btn" aria-expanded="false" aria-controls="site-navigation">Menu</button>
+    <nav id="site-navigation" aria-label="Main navigation"></nav>
     <nav id="auth-bar" aria-label="Account"></nav>
-    <p class="note" role="status">Status: <span id="health-pill">Checking backend…</span> <span id="backend-label"></span></p>
+    <p class="note service-status" role="status">Service: <span id="health-pill">Checking backend…</span> <span id="backend-label"></span></p>
+    <div id="progress" role="progressbar" aria-label="Estimate progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden></div>
+    <p id="status" role="status" aria-live="polite"></p>
+    <section id="result-area" aria-live="polite" aria-label="Latest estimate" tabindex="-1"></section>
+    <ul id="batch-list" hidden aria-label="Batch results"></ul>
+
+    <div id="page-content" tabindex="-1" aria-live="off"></div>
+
+    <section id="dashboard-page" class="route-slice" aria-labelledby="dashboard-heading">
+      <h2 id="dashboard-heading">Your herd workspace</h2>
+      <p id="dashboard-welcome" class="note">Sign in to review saved estimates and animal records. You can also try the estimator if local access is enabled.</p>
+      <div class="dashboard-grid">
+        <a class="dashboard-card" href="/estimate/photo"><strong>Estimate from a photo</strong><span>Take or choose a picture of one animal.</span></a>
+        <a class="dashboard-card" href="/estimate/batch"><strong>Upload a batch</strong><span>Review and estimate up to 20 photos.</span></a>
+        <a class="dashboard-card" href="/estimate/tape"><strong>Measure with a tape</strong><span>Estimate offline from heart girth and body length.</span></a>
+        <a class="dashboard-card" href="/history"><strong>Saved history</strong><span>Find estimates, scale records, and exports.</span></a>
+        <a class="dashboard-card" href="/animals"><strong>Your animals</strong><span>Manage animal records and weight trends.</span></a>
+        <a class="dashboard-card" href="/uploads"><strong>Background uploads</strong><span>Check estimates that are still processing.</span></a>
+      </div>
+      <p id="dashboard-summary" class="dashboard-summary" aria-live="polite"></p>
+      <section aria-labelledby="dashboard-active-heading">
+        <h3 id="dashboard-active-heading">Active uploads</h3>
+        <ul id="dashboard-uploads" aria-label="Active uploads"></ul>
+        <p id="dashboard-uploads-empty" class="note">No active uploads.</p>
+      </section>
+      <section aria-labelledby="dashboard-recent-heading">
+        <h3 id="dashboard-recent-heading">Recent estimates</h3>
+        <ul id="dashboard-recent" aria-label="Recent estimates"></ul>
+        <p id="dashboard-recent-empty" class="note">No saved estimates yet.</p>
+      </section>
+    </section>
 
     <div class="auth-view" data-view="estimator">
-    <label for="image-input">Choose images</label>    <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple capture="environment" aria-describedby="limits-hint status">
-    <p id="limits-hint" class="note">JPEG, PNG, WebP, BMP, or GIF, 20 MB or less per file. HEIC photos are not supported — export them as JPEG first. Large photos are resized in your browser to upload faster. Files stay on this device until you press Estimate. You can also drag and drop files anywhere on this page or paste images from the clipboard.</p>
+    <section id="photo-estimator-page" class="route-slice" aria-labelledby="photo-estimate-heading">
+    <h2 id="photo-estimate-heading">Estimate from photos</h2>
+    <label for="image-input">Choose photos (up to 20)</label>    <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple aria-describedby="limits-hint status">
+    <label for="camera-input" class="sr-only">Take a photo</label><input id="camera-input" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" aria-label="Take a photo">
+    <button id="camera-button" type="button" class="secondary-btn">Take photo</button>
+    <p id="limits-hint" class="note">JPEG, PNG, WebP, BMP, or GIF; up to 20 MB each and 60 MB per batch. HEIC photos are not supported — export them as JPEG first. Large photos are resized in your browser to upload faster. Photos stay on this device until you submit. You can also drag and drop files anywhere on this page or paste images from the clipboard.</p>
     <ul id="file-list" hidden aria-label="Selected files"></ul>
     <button id="estimate-button" type="button">Estimate Weight</button>
     <button id="background-button" type="button" class="secondary-btn" title="Queue the estimate to run in the background while logged in">Estimate in background</button>
     <button id="cancel-button" type="button" hidden>Cancel</button>
     <button id="clear-button" type="button" hidden>Clear selection</button>
     <p class="note">Tip: fill in the tape measurements below before estimating to attach a tape cross-check to each photo.</p>
-    <div id="progress" role="progressbar" aria-label="Estimate progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden></div>
-    <p id="status" role="status" aria-live="polite"></p>
-
-    <section id="result-area" aria-live="polite" aria-label="Latest estimate" tabindex="-1"></section>
-    <ul id="batch-list" hidden aria-label="Batch results"></ul>
     <button id="unit-toggle" type="button">Show in lb</button>
+    </section>
 
-    <section aria-labelledby="photo-heading">
+    <section id="photo-tips-page" class="route-slice" aria-labelledby="photo-heading">
       <h2 id="photo-heading">Good photo tips</h2>
       <ul>
         <li>Photograph one animal from the side, showing the full body and legs.</li>
@@ -45,7 +79,7 @@
       </ul>
     </section>
 
-    <section aria-labelledby="demo-heading">
+    <section id="demo-page" class="route-slice" aria-labelledby="demo-heading">
       <h2 id="demo-heading">Demo cows</h2>
       <label for="demo-select">Choose a demo cow</label>
       <select id="demo-select">
@@ -61,7 +95,7 @@
       </div>
     </section>
 
-    <section aria-labelledby="profile-heading">
+    <section id="estimate-profile-page" class="route-slice" aria-labelledby="profile-heading">
       <h2 id="profile-heading">Animal details (optional)</h2>
       <p class="note">Breed, sex, and age ride along with photo and demo estimates for the AI backend. Tape-only and offline placeholder results are formula-based and unaffected by these hints. Leave blank to skip.</p>
       <div>
@@ -69,7 +103,7 @@
         <select id="animal-select" aria-describedby="profile-status">
           <option value="">No animal — do not link</option>
         </select>
-        <p class="note">Logged-in users can link an estimate to one of their animals so trends never mix unrelated cows. <a href="#account">Manage animals in Account</a>.</p>
+        <p class="note">Logged-in users can link each estimate to one of their animals so trends never mix unrelated cows. <a href="/animals">Manage animals</a>.</p>
         <label for="retain-photo">
           <input id="retain-photo" type="checkbox"> Retain this photo privately (when the server enables retention)
         </label>
@@ -98,7 +132,7 @@
       <p id="profile-status" class="note" role="status" aria-live="polite"></p>
     </section>
 
-    <section aria-labelledby="tape-heading">
+    <section id="tape-estimator-page" class="route-slice" aria-labelledby="tape-heading">
       <h2 id="tape-heading">Tape measure</h2>
       <p class="note">No photo? Measure heart girth (just behind the front legs) and body length (chest to tail head) in centimetres.</p>
       <div class="tape-row">
@@ -115,7 +149,7 @@
       <p id="tape-status" class="note" role="status" aria-live="polite"></p>
     </section>
 
-    <section aria-labelledby="history-heading">
+    <section id="session-history-page" class="route-slice" aria-labelledby="history-heading">
       <h2 id="history-heading">History</h2>
       <p id="history-empty">Estimates from this session will show here.</p>
       <p class="note">Session estimates are listed in order and may be different animals — the chart is not a growth trend.</p>
@@ -136,10 +170,10 @@
         <p class="note">Accounts require an invitation from the operator. There is no public registration.</p>
         <form id="login-form" class="auth-card">
           <label for="login-email">Email
-            <input id="login-email" name="email" type="email" autocomplete="username" required>
+            <input id="login-email" name="email" type="email" autocomplete="username" aria-describedby="account-status" required>
           </label>
           <label for="login-password">Password
-            <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" aria-describedby="account-status" required>
           </label>
           <div class="auth-row">
             <button type="submit">Log in</button>
@@ -202,7 +236,7 @@
     </div>
 
     <div class="auth-view" data-view="account" hidden>
-      <section aria-labelledby="account-heading">
+      <section id="account-page-root" aria-labelledby="account-heading">
         <h2 id="account-heading">Account</h2>
         <div id="account-summary" aria-live="polite"></div>
         <h3>Profile</h3>
@@ -296,6 +330,12 @@
               <option value="">All animals</option>
             </select>
           </label>
+          <label for="history-filter-from">From
+            <input id="history-filter-from" type="date">
+          </label>
+          <label for="history-filter-to">To
+            <input id="history-filter-to" type="date">
+          </label>
           <div class="auth-row">
             <button type="submit">Apply filters</button>
           </div>
@@ -311,6 +351,9 @@
         <p class="note">Queued estimates keep running when your connection drops. Open a job to see its result.</p>
         <ul id="job-list" aria-label="Background jobs"></ul>
         <p id="job-empty" class="note">No background jobs.</p>
+        <h3>Upload batches</h3>
+        <ul id="upload-batch-list" aria-label="Upload batches"></ul>
+        <p id="upload-batch-empty" class="note">No batches yet.</p>
         <h3>Retained photos</h3>
         <p class="note">Only here when you tick retention on an estimate and the operator enables it. Photos expire automatically.</p>
         <ul id="photo-list" aria-label="Retained photos"></ul>

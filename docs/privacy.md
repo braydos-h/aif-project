@@ -10,15 +10,20 @@ Two invited users. No public registration, no tracking, no analytics.
 | Invite/recovery metadata | SQLite `invites`, `recovery_tokens` | Token **hashes** only; raw tokens live in the operator's private relay and your cookie. |
 | Sessions | SQLite `sessions` | Random token hashes + CSRF tokens; HttpOnly cookies; expiry + revocation. |
 | Animals | SQLite `animals` | Owned by one account; never shared between the two users. |
-| Estimates | SQLite `estimates` | Value, range, source/method, model/provider, estimator + prompt versions, tape inputs, animal hints, timestamps, placeholder flag. **No photos, no raw model dumps, no API keys.** |
-| Retained photos (only with `AIF_RETAIN_PHOTOS=1` + per-estimate opt-in) | `<data_dir>/photos/<opaque-id>` + `photos` rows | Metadata-stripped bytes, owner + optional estimate link, expiry, size/MIME. Private: never in backups, never shared. |
+| Estimates | SQLite `estimates` | Value, range, source/method, model/provider, estimator + prompt versions, tape inputs, animal hints, timestamps, placeholder flag. **No photos, raw model dumps, or API keys.** |
+| Background job requests | SQLite `jobs.payload` | A queued photo is temporarily stored as a JSON request payload so it can survive reconnects/restarts. The payload is cleared when the job becomes success, failed, cancelled, or expired. Queued work is deliberately omitted from sanitized backup snapshots. |
+| Retained photos (only with `AIF_RETAIN_PHOTOS=1` + per-estimate opt-in) | `<data_dir>/photos/<opaque-id>` + `photos` rows | Metadata-stripped bytes, owner + optional estimate link, expiry, size/MIME. Bytes are excluded from backups; metadata rows may remain in the SQLite snapshot. Never shared. |
 | Usage counters, audit log | SQLite | Counts per day; audit entries exclude secrets/tokens/prompts/images. |
 
 ## What is NOT stored by default
 
-- Uploaded photographs (transient-only unless retention is enabled:
-  decoded, validated, sent to the AI provider for the estimate, then
-  dropped — never written to disk).
+- Synchronous uploaded photographs are decoded, validated, sent to the AI
+  provider for the estimate, then dropped from server memory; they are not
+  written to disk unless photo retention is explicitly enabled.
+- Background uploads are an exception while work is pending: their encoded
+  request payloads are stored in SQLite so jobs can be resumed after a client
+  disconnect or server restart. Terminal jobs clear the payload. The result
+  row stores estimate metadata only.
 
 ## Optional photo retention (`AIF_RETAIN_PHOTOS=1`)
 
@@ -34,9 +39,10 @@ Off by default. When the operator enables it, a logged-in estimate with
   startup and periodically;
 - deleting a history row deletes its linked photos; deleting an account
   deletes all of its photos (rows cascade, files removed explicitly);
-- retained photos are **excluded from database backups**; the photo dir
-  is covered only if the operator backs it up separately (document the
-  same 14-day rotation if you do).
+- retained photo **files/bytes are excluded from database backups**; SQLite
+  photo metadata rows remain in snapshots. The photo dir is covered only if
+  the operator backs it up separately (document the same 14-day rotation if
+  you do).
 - API keys, passwords, session tokens, invite/reset tokens (hashes only).
 - Base64 images in browser storage (the WebUI uses no `localStorage`).
 
@@ -57,9 +63,11 @@ measurements.
   animals, retained photos) or delete your account (everything, sessions
   revoked, in one transaction). Retained photos additionally expire
   automatically after `AIF_PHOTO_TTL_DAYS`.
-- Backups: 14 daily encrypted off-server copies; deleted data ages out
-  as backups rotate (worst case 14 days). There is no longer-lived copy
-  by design.
+- Backups: 14 daily encrypted off-server copies. The backup script marks
+  queued/active jobs expired and clears every job payload from the snapshot,
+  so queued photos are not recoverable from a backup. Terminal estimate
+  metadata remains in the snapshot; deleted data ages out as backups rotate
+  (worst case 14 days). Retained photo files are excluded.
 - Support contact: the operator (see your invite email). Region-specific
   assessment: this is a private two-user tool with no public offering;
   confirm hosting-region obligations with the operator before launch.
@@ -73,8 +81,9 @@ measurements.
   everywhere). **Delete account** (needs password + checkbox): revokes
   every session and deletes all owned rows immediately.
 - Batch estimates finish server-side once sent; results already saved
-  stay saved — delete them from history if unwanted. Logging out does
-  not cancel an in-flight batch, and never exposes its results to the
-  other account.
+  stay saved — delete them from history if unwanted. Cancelling a batch
+  clears queued payloads, while active inference may finish and remains
+  visible to its owner. Logging out does not cancel in-flight work, and
+  never exposes its results to the other account.
 - Estimate limits and dosing warnings stay visible in results, history,
   and exports.

@@ -5,8 +5,10 @@
 //! (`<AIF_DATA_DIR>/aif.db`), WAL mode, foreign keys on, versioned
 //! migrations in [`MIGRATIONS`] so restarts and upgrades preserve data.
 //!
-//! Raw photos are never stored here (transient-only photo policy); only
-//! estimate metadata is persisted.
+//! Synchronous photo estimates are processed in memory. Background photo
+//! estimates temporarily store their request payload in `jobs` until the job
+//! reaches a terminal state; that payload is then cleared and backup snapshots
+//! sanitize all job payloads.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -16,7 +18,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::time_util::{rfc3339, unix_now};
 
 /// Current schema version (length of [`MIGRATIONS`]).
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Versioned migrations, applied in order inside one transaction each.
 /// New migrations must only add tables/columns/indexes — never drop or
@@ -157,6 +159,22 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON jobs(user_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(status, run_after, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idem ON jobs(user_id, idempotency_key);
+"#,
+    // v3: group durable jobs into owner-scoped, photo-free batch records.
+    r#"
+CREATE TABLE IF NOT EXISTS upload_batches (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expected_count INTEGER NOT NULL CHECK (expected_count BETWEEN 1 AND 20)
+);
+CREATE INDEX IF NOT EXISTS idx_upload_batches_user ON upload_batches(user_id, created_at DESC);
+ALTER TABLE jobs ADD COLUMN batch_id TEXT;
+ALTER TABLE jobs ADD COLUMN batch_index INTEGER;
+ALTER TABLE jobs ADD COLUMN filename TEXT;
+CREATE INDEX IF NOT EXISTS idx_jobs_batch ON jobs(batch_id, batch_index);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_batch_index ON jobs(batch_id, batch_index) WHERE batch_id IS NOT NULL;
+UPDATE jobs SET payload = '{}' WHERE status IN ('success', 'failed', 'cancelled', 'expired');
 "#,
 ];
 
@@ -1410,6 +1428,9 @@ pub struct Job {
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub history_id: Option<String>,
+    pub batch_id: Option<String>,
+    pub batch_index: Option<i64>,
+    pub filename: Option<String>,
 }
 
 fn row_to_job(r: &rusqlite::Row<'_>) -> Result<Job, rusqlite::Error> {
@@ -1427,10 +1448,39 @@ fn row_to_job(r: &rusqlite::Row<'_>) -> Result<Job, rusqlite::Error> {
         error_code: r.get(10)?,
         error_message: r.get(11)?,
         history_id: r.get(12)?,
+        batch_id: r.get(13)?,
+        batch_index: r.get(14)?,
+        filename: r.get(15)?,
     })
 }
 
-const JOB_COLS: &str = "id, user_id, created_at, updated_at, run_after, status, attempts, idempotency_key, payload, result, error_code, error_message, history_id FROM jobs";
+const JOB_COLS: &str = "id, user_id, created_at, updated_at, run_after, status, attempts, idempotency_key, payload, result, error_code, error_message, history_id, batch_id, batch_index, filename FROM jobs";
+
+/// Persistent upload-batch metadata. Original image bytes are never stored in
+/// this row; queued job payloads are erased as soon as each job is terminal.
+#[derive(Debug, Clone)]
+pub struct UploadBatch {
+    pub id: String,
+    pub user_id: String,
+    pub created_at: String,
+    pub expected_count: i64,
+}
+
+/// Per-job metadata linking one queued estimate to its batch position.
+pub struct BatchJobMetadata<'a> {
+    pub batch_id: &'a str,
+    pub batch_index: i64,
+    pub filename: &'a str,
+}
+
+fn row_to_upload_batch(r: &rusqlite::Row<'_>) -> Result<UploadBatch, rusqlite::Error> {
+    Ok(UploadBatch {
+        id: r.get(0)?,
+        user_id: r.get(1)?,
+        created_at: r.get(2)?,
+        expected_count: r.get(3)?,
+    })
+}
 
 /// Maximum estimate attempts per job before it fails permanently.
 pub const MAX_JOB_ATTEMPTS: i64 = 3;
@@ -1470,12 +1520,159 @@ impl Db {
         })
     }
 
+    /// Create a batch record for 1–20 items without retaining filenames or
+    /// photo bytes. Item metadata is attached to jobs as they are accepted.
+    pub fn create_upload_batch(
+        &self,
+        id: &str,
+        user_id: &str,
+        expected_count: i64,
+        now: &str,
+    ) -> Result<(), String> {
+        if !(1..=20).contains(&expected_count) {
+            return Err("batch item count must be between 1 and 20".to_string());
+        }
+        self.with_conn(|conn| {
+            conn.execute("INSERT INTO upload_batches (id, user_id, created_at, expected_count) VALUES (?, ?, ?, ?)", params![id, user_id, now, expected_count])
+                .map(|_| ()).map_err(|e| e.to_string())
+        })
+    }
+
+    /// Fetch an upload batch by id.
+    pub fn upload_batch_by_id(&self, id: &str) -> Result<Option<UploadBatch>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT id, user_id, created_at, expected_count FROM upload_batches WHERE id = ?",
+                params![id],
+                row_to_upload_batch,
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    /// List the caller's batches newest first.
+    pub fn list_upload_batches(
+        &self,
+        user_id: &str,
+        limit: i64,
+    ) -> Result<Vec<UploadBatch>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT id, user_id, created_at, expected_count FROM upload_batches WHERE user_id = ? ORDER BY created_at DESC LIMIT ?").map_err(|e| e.to_string())?;
+            let rows = stmt.query_map(params![user_id, limit.clamp(1, 100)], row_to_upload_batch).map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        })
+    }
+
+    /// Create one batch item job. Replays require the same owner, batch, and
+    /// item index and return the existing job.
+    pub fn create_batch_job(
+        &self,
+        id: &str,
+        user_id: &str,
+        metadata: BatchJobMetadata<'_>,
+        idempotency_key: Option<&str>,
+        payload: &str,
+        now: &str,
+    ) -> Result<(String, bool), String> {
+        let BatchJobMetadata {
+            batch_id,
+            batch_index,
+            filename,
+        } = metadata;
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            let batch = tx.query_row("SELECT user_id, expected_count FROM upload_batches WHERE id = ?", params![batch_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).optional().map_err(|e| e.to_string())?;
+            let Some((owner, count)) = batch else { return Err("upload batch not found".to_string()); };
+            if owner != user_id { return Err("upload batch not found".to_string()); }
+            if batch_index < 0 || batch_index >= count { return Err("batch item index is out of range".to_string()); }
+            if let Some(key) = idempotency_key {
+                let existing: Option<(String, Option<String>, Option<i64>)> = tx.query_row("SELECT id, batch_id, batch_index FROM jobs WHERE user_id = ? AND idempotency_key = ?", params![user_id, key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().map_err(|e| e.to_string())?;
+                if let Some((job_id, Some(existing_batch), Some(existing_index))) = existing {
+                    if existing_batch == batch_id && existing_index == batch_index { tx.commit().map_err(|e| e.to_string())?; return Ok((job_id, true)); }
+                    return Err("idempotency key is already used for another item".to_string());
+                }
+            }
+            let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM jobs WHERE batch_id = ? AND batch_index = ?)", params![batch_id, batch_index], |r| r.get(0)).map_err(|e| e.to_string())?;
+            if exists { return Err("batch item was already submitted".to_string()); }
+            tx.execute("INSERT INTO jobs (id, user_id, created_at, updated_at, run_after, status, attempts, idempotency_key, payload, batch_id, batch_index, filename) VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?)", params![id, user_id, now, now, now, idempotency_key, payload, batch_id, batch_index, filename]).map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+            Ok((id.to_string(), false))
+        })
+    }
+
+    /// List the jobs in one batch in item order.
+    pub fn upload_batch_jobs(&self, batch_id: &str) -> Result<Vec<Job>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {} WHERE batch_id = ? ORDER BY batch_index",
+                    JOB_COLS
+                ))
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![batch_id], row_to_job)
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Cancel queued jobs belonging to a batch. Active jobs finish normally.
+    pub fn cancel_upload_batch(
+        &self,
+        batch_id: &str,
+        user_id: &str,
+        now: &str,
+    ) -> Result<i64, String> {
+        self.with_conn(|conn| conn.execute("UPDATE jobs SET status = 'cancelled', updated_at = ?, payload = '{}' WHERE batch_id = ? AND user_id = ? AND status = 'queued'", params![now, batch_id, user_id]).map(|n| n as i64).map_err(|e| e.to_string()))
+    }
+
+    /// Restore a failed or cancelled batch item to the queue with the same
+    /// idempotency key. Only the owning account can perform the HTTP-level
+    /// authorization; this method also checks all row identifiers.
+    pub fn retry_batch_job(
+        &self,
+        job_id: &str,
+        batch_id: &str,
+        user_id: &str,
+        batch_index: i64,
+        payload: &str,
+        now: &str,
+    ) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let updated = conn.execute(
+                "UPDATE jobs SET status = 'queued', updated_at = ?, run_after = ?, attempts = 0, payload = ?, result = NULL, error_code = NULL, error_message = NULL WHERE id = ? AND batch_id = ? AND user_id = ? AND batch_index = ? AND status IN ('failed', 'cancelled', 'expired')",
+                params![now, now, payload, job_id, batch_id, user_id, batch_index],
+            ).map_err(|e| e.to_string())?;
+            Ok(updated == 1)
+        })
+    }
+
     /// Fetch one job by id.
     pub fn job_by_id(&self, id: &str) -> Result<Option<Job>, String> {
         self.with_conn(|conn| {
             conn.query_row(
                 &format!("SELECT {} WHERE id = ?", JOB_COLS),
                 params![id],
+                row_to_job,
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Find an existing owned job by its idempotency key. HTTP handlers use
+    /// this before queue-capacity checks so exact replays remain discoverable
+    /// when the queue is full.
+    pub fn job_by_idempotency_key(&self, user_id: &str, key: &str) -> Result<Option<Job>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                &format!(
+                    "SELECT {} WHERE user_id = ? AND idempotency_key = ?",
+                    JOB_COLS
+                ),
+                params![user_id, key],
                 row_to_job,
             )
             .optional()
@@ -1548,8 +1745,8 @@ impl Db {
     ) -> Result<(), String> {
         self.with_conn(|conn| {
             conn.execute(
-                "UPDATE jobs SET status = ?, updated_at = ?, run_after = COALESCE(?, run_after), attempts = attempts + 1, result = COALESCE(?, result), error_code = ?, error_message = ?, history_id = COALESCE(?, history_id) WHERE id = ?",
-                params![status, now, run_after, result, error_code, error_message, history_id, id],
+                "UPDATE jobs SET status = ?, updated_at = ?, run_after = COALESCE(?, run_after), attempts = attempts + 1, result = COALESCE(?, result), error_code = ?, error_message = ?, history_id = COALESCE(?, history_id), payload = CASE WHEN ? IN ('success', 'failed', 'cancelled', 'expired') THEN '{}' ELSE payload END WHERE id = ?",
+                params![status, now, run_after, result, error_code, error_message, history_id, status, id],
             )
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -1561,7 +1758,7 @@ impl Db {
         self.with_conn(|conn| {
             let rows = conn
                 .execute(
-                    "UPDATE jobs SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'queued'",
+                    "UPDATE jobs SET status = 'cancelled', updated_at = ?, payload = '{}' WHERE id = ? AND status = 'queued'",
                     params![now, id],
                 )
                 .map_err(|e| e.to_string())?;
@@ -1602,7 +1799,7 @@ impl Db {
         self.with_conn(|conn| {
             let rows = conn
                 .execute(
-                    "UPDATE jobs SET status = 'expired', updated_at = ? WHERE status = 'queued' AND created_at < ?",
+                    "UPDATE jobs SET status = 'expired', updated_at = ?, payload = '{}' WHERE status = 'queued' AND created_at < ?",
                     params![now, before],
                 )
                 .map_err(|e| e.to_string())?;
@@ -1709,6 +1906,39 @@ mod tests {
     }
 
     #[test]
+    fn migration_v3_clears_legacy_terminal_job_payloads() {
+        let dir = std::env::temp_dir().join(format!("aif-db-v2-payload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("aif.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);")
+                .unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.execute(
+                "INSERT INTO schema_migrations VALUES (1, '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO users (id,email,display_name,password_hash,role,created_at,updated_at) VALUES ('u1','a@example.com','A','h','user','t','t')", [])
+                .unwrap();
+            conn.execute_batch(MIGRATIONS[1]).unwrap();
+            conn.execute(
+                "INSERT INTO schema_migrations VALUES (2, '2026-01-02T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO jobs (id,user_id,created_at,updated_at,run_after,status,attempts,payload) VALUES ('old-job','u1','t','t','t','failed',1,'{\"image_base64\":\"legacy-photo\"}')", [])
+                .unwrap();
+        }
+        let db = Db::open(dir.to_str().unwrap()).unwrap();
+        assert_eq!(db.schema_version().unwrap(), SCHEMA_VERSION);
+        assert_eq!(db.job_by_id("old-job").unwrap().unwrap().payload, "{}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn job_lifecycle_claim_finish_cancel() {
         let db = test_db("jobs");
         db.create_user("u1", "a@example.com", "A", "h", "user")
@@ -1743,6 +1973,10 @@ mod tests {
         .unwrap();
         let done = db.job_by_id("j1").unwrap().unwrap();
         assert_eq!(done.status, "success");
+        assert_eq!(
+            done.payload, "{}",
+            "terminal jobs must release photo payloads"
+        );
         assert_eq!(done.history_id.as_deref(), Some("h1"));
         assert_eq!(done.attempts, 1);
         // Crash recovery requeues interrupted work without duplicating it.
@@ -1753,8 +1987,146 @@ mod tests {
         assert_eq!(db.job_by_id("j3").unwrap().unwrap().status, "queued");
         // Cancel a queued job; prune only terminal rows.
         assert!(db.cancel_job("j3", now).unwrap());
+        assert_eq!(db.job_by_id("j3").unwrap().unwrap().payload, "{}");
         assert_eq!(db.prune_jobs("2026-07-01T00:00:00Z").unwrap(), 2);
         assert!(db.job_by_id("j1").unwrap().is_none());
+    }
+
+    #[test]
+    fn upload_batches_are_private_ordered_and_idempotent() {
+        let db = test_db("upload-batch");
+        db.create_user("u1", "a@example.com", "A", "h", "user")
+            .unwrap();
+        db.create_user("u2", "b@example.com", "B", "h", "user")
+            .unwrap();
+        let now = "2026-06-01T00:00:00Z";
+        db.create_upload_batch("b1", "u1", 2, now).unwrap();
+        let (id, replayed) = db
+            .create_batch_job(
+                "j1",
+                "u1",
+                BatchJobMetadata {
+                    batch_id: "b1",
+                    batch_index: 0,
+                    filename: "cow.jpg",
+                },
+                Some("item-key"),
+                r#"{"heart_girth_cm":180}"#,
+                now,
+            )
+            .unwrap();
+        assert_eq!(id, "j1");
+        assert!(!replayed);
+        let (replay_id, replayed) = db
+            .create_batch_job(
+                "j2",
+                "u1",
+                BatchJobMetadata {
+                    batch_id: "b1",
+                    batch_index: 0,
+                    filename: "cow.jpg",
+                },
+                Some("item-key"),
+                "{}",
+                now,
+            )
+            .unwrap();
+        assert_eq!(replay_id, "j1");
+        assert!(replayed);
+        assert!(db
+            .create_batch_job(
+                "j3",
+                "u1",
+                BatchJobMetadata {
+                    batch_id: "b1",
+                    batch_index: 0,
+                    filename: "other.jpg",
+                },
+                Some("other-key"),
+                "{}",
+                now
+            )
+            .is_err());
+        assert!(db
+            .create_batch_job(
+                "j4",
+                "u2",
+                BatchJobMetadata {
+                    batch_id: "b1",
+                    batch_index: 1,
+                    filename: "private.jpg",
+                },
+                Some("other-user"),
+                "{}",
+                now
+            )
+            .is_err());
+        let jobs = db.upload_batch_jobs("b1").unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].batch_index, Some(0));
+        assert_eq!(jobs[0].filename.as_deref(), Some("cow.jpg"));
+        assert_eq!(db.list_upload_batches("u2", 10).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn failed_batch_item_retries_same_job_and_clears_payload_again() {
+        let db = test_db("upload-batch-retry");
+        db.create_user("u1", "a@example.com", "A", "h", "user")
+            .unwrap();
+        let now = "2026-06-01T00:00:00Z";
+        db.create_upload_batch("b1", "u1", 1, now).unwrap();
+        db.create_batch_job(
+            "j1",
+            "u1",
+            BatchJobMetadata {
+                batch_id: "b1",
+                batch_index: 0,
+                filename: "cow.jpg",
+            },
+            Some("stable-item-key"),
+            r#"{"image_base64":"first-photo"}"#,
+            now,
+        )
+        .unwrap();
+        db.finish_job(
+            "j1",
+            "failed",
+            now,
+            None,
+            None,
+            Some("provider_error"),
+            Some("provider unavailable"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(db.job_by_id("j1").unwrap().unwrap().payload, "{}");
+        assert!(db
+            .retry_batch_job(
+                "j1",
+                "b1",
+                "u1",
+                0,
+                r#"{"image_base64":"reselected-photo"}"#,
+                now,
+            )
+            .unwrap());
+        let retried = db.job_by_id("j1").unwrap().unwrap();
+        assert_eq!(retried.status, "queued");
+        assert_eq!(retried.payload, r#"{"image_base64":"reselected-photo"}"#);
+        assert_eq!(db.upload_batch_jobs("b1").unwrap().len(), 1);
+        assert!(!db.retry_batch_job("j1", "b1", "u1", 0, "{}", now).unwrap());
+        db.finish_job(
+            "j1",
+            "success",
+            now,
+            None,
+            Some(r#"{"estimated_weight_kg":400}"#),
+            None,
+            None,
+            Some("history-1"),
+        )
+        .unwrap();
+        assert_eq!(db.job_by_id("j1").unwrap().unwrap().payload, "{}");
     }
 
     #[test]

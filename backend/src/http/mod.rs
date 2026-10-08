@@ -46,6 +46,7 @@ pub mod request_id;
 pub mod response;
 pub mod server;
 pub mod session;
+pub mod upload_batches;
 pub mod validation;
 
 pub use server::serve;
@@ -58,7 +59,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::limits::{AttemptLimiter, InferenceGate};
 
-use assets::{ACCOUNT_CSS, ACCOUNT_JS, APP_JS, INDEX_HTML, STYLES_CSS};
+use assets::{ACCOUNT_CSS, ACCOUNT_JS, APP_JS, INDEX_HTML, PAGES_CSS, ROUTER_JS, STYLES_CSS};
 use estimate::{handle_estimate, handle_estimate_batch};
 use handlers::{handle_demo_image, handle_demo_list, handle_info, handle_metrics};
 use response::{error_json, Response, CODE_NOT_FOUND};
@@ -236,6 +237,15 @@ fn dispatch(
         ("GET", "/account.css") => {
             policy(Response::bytes(200, "text/css; charset=utf-8", ACCOUNT_CSS))
         }
+        ("GET", "/router.js") => policy(Response::bytes(
+            200,
+            "application/javascript; charset=utf-8",
+            ROUTER_JS,
+        )),
+        ("GET", "/pages.css") => policy(Response::bytes(200, "text/css; charset=utf-8", PAGES_CSS)),
+        ("GET", path) if is_page_route(path) => {
+            policy(Response::bytes(200, "text/html; charset=utf-8", INDEX_HTML))
+        }
         ("GET", "/health") => policy(handlers::handle_health(request_id, state)),
         ("GET", "/info") => policy(handle_info(request_id, state)),
         ("GET", "/metrics") => policy(handle_metrics(request_id, state, head, peer_ip)),
@@ -341,6 +351,58 @@ fn dispatch(
         }
         ("POST", "/api/jobs") => jobs::handle_create(body, request_id, state, head, peer_ip),
         ("GET", "/api/jobs") => jobs::handle_list(request_id, state, head, peer_ip),
+        ("POST", "/api/upload-batches") => {
+            upload_batches::handle_create(body, request_id, state, head, peer_ip)
+        }
+        ("GET", "/api/upload-batches") => {
+            upload_batches::handle_list(request_id, state, head, peer_ip)
+        }
+        ("POST", path) if path.starts_with("/api/upload-batches/") && path.ends_with("/cancel") => {
+            let id = path
+                .strip_prefix("/api/upload-batches/")
+                .unwrap_or("")
+                .strip_suffix("/cancel")
+                .unwrap_or("");
+            if id.is_empty() || id.contains('/') {
+                Response::json(404, error_json(CODE_NOT_FOUND, "Not found", request_id))
+                    .with_policy(production)
+            } else {
+                upload_batches::handle_cancel(id, body, request_id, state, head, peer_ip)
+            }
+        }
+        ("POST", path) if path.starts_with("/api/upload-batches/") && path.ends_with("/retry") => {
+            let rest = path.strip_prefix("/api/upload-batches/").unwrap_or("");
+            if let Some((batch_id, item)) = rest.split_once("/items/") {
+                if let Some(index) = item
+                    .strip_suffix("/retry")
+                    .and_then(|v| v.parse::<i64>().ok())
+                {
+                    if !batch_id.is_empty() && !batch_id.contains('/') {
+                        upload_batches::handle_retry(
+                            batch_id, index, body, request_id, state, head, peer_ip,
+                        )
+                    } else {
+                        Response::json(404, error_json(CODE_NOT_FOUND, "Not found", request_id))
+                            .with_policy(production)
+                    }
+                } else {
+                    Response::json(404, error_json(CODE_NOT_FOUND, "Not found", request_id))
+                        .with_policy(production)
+                }
+            } else {
+                Response::json(404, error_json(CODE_NOT_FOUND, "Not found", request_id))
+                    .with_policy(production)
+            }
+        }
+        ("GET", path) if path.starts_with("/api/upload-batches/") => {
+            let id = path.strip_prefix("/api/upload-batches/").unwrap_or("");
+            if id.is_empty() || id.contains('/') {
+                Response::json(404, error_json(CODE_NOT_FOUND, "Not found", request_id))
+                    .with_policy(production)
+            } else {
+                upload_batches::handle_get(id, request_id, state, head, peer_ip)
+            }
+        }
         ("GET", path) if path.starts_with("/api/jobs/") => {
             route_jobs_get(path, body, request_id, state, head, peer_ip)
         }
@@ -361,6 +423,45 @@ fn dispatch(
             error_json(CODE_NOT_FOUND, "Not found", request_id),
         )),
     }
+}
+
+/// Return the application shell for a fixed page or a validated detail page.
+/// These are explicit browser routes, never filesystem paths.
+fn is_page_route(path: &str) -> bool {
+    matches!(
+        path,
+        "/login"
+            | "/invite"
+            | "/recover"
+            | "/reset-password"
+            | "/dashboard"
+            | "/estimate/photo"
+            | "/estimate/batch"
+            | "/estimate/tape"
+            | "/uploads"
+            | "/history"
+            | "/animals"
+            | "/photos"
+            | "/settings/profile"
+            | "/settings/security"
+            | "/settings/privacy"
+            | "/operator"
+            | "/operator/invites"
+            | "/operator/users"
+            | "/operator/activity"
+            | "/help"
+            | "/privacy"
+    ) || ["/animals/", "/history/", "/uploads/"]
+        .iter()
+        .any(|prefix| {
+            path.strip_prefix(prefix).is_some_and(|id| {
+                !id.is_empty()
+                    && id.len() <= 64
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+        })
 }
 
 /// Reattach the query string the socket layer stripped, for handlers that

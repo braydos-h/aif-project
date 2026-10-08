@@ -2,6 +2,9 @@
   "use strict";
 
   const MAX_FILE_BYTES = 20 * 1024 * 1024;
+  const MAX_BATCH_FILES = 20;
+  const MAX_BATCH_INPUT_BYTES = 60 * 1024 * 1024;
+  const MAX_ITEM_BODY_BYTES = 18 * 1024 * 1024;
   const MAX_HISTORY = 20;
   // Large photos are resized in-browser before upload: longest edge capped,
   // files under this size go up untouched, GIF/BMP are never re-encoded.
@@ -24,10 +27,57 @@
   // requires auth, anonymous estimates are refused with 401 — block early
   // with directions instead of burning an upload.
   const authMode = { loggedIn: false, authRequired: false };
+  const fileAnimalAssignments = new Map();
+  const requestKeys = new Map();
+  const queuedBatchIds = new Map();
+  // Keep submitted photo bytes only in this tab so a failed background item
+  // can be retried without persisting images in browser storage.
+  const pendingBatchItems = new Map();
   window.aifEstimator = {
     setAuthMode(loggedIn, authRequired) {
       authMode.loggedIn = loggedIn === true;
       authMode.authRequired = authRequired === true;
+    },
+    canRetryBatchItem(batchId, index) {
+      return pendingBatchItems.has(`${batchId}:${index}`);
+    },
+    async retryBatchItem(batchId, index) {
+      const cacheKey = `${batchId}:${index}`;
+      const item = pendingBatchItems.get(cacheKey);
+      if (!item) throw new Error("This photo is no longer available in this tab. Select it again to retry.");
+      const image = await fileToDataUrl(item.file);
+      const payload = { image_base64: image, ...item.fields, idempotency_key: item.key };
+      if (new TextEncoder().encode(JSON.stringify(payload)).length > MAX_ITEM_BODY_BYTES) {
+        throw new Error("This photo is too large after resizing. Select a smaller image to retry.");
+      }
+      const response = await fetch(`/api/upload-batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(index)}/retry`, {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "Could not retry this photo.");
+      document.dispatchEvent(new CustomEvent("aif-jobs-changed"));
+      return result;
+    },
+    forgetBatchItem(batchId, index) {
+      pendingBatchItems.delete(`${batchId}:${index}`);
+    },
+    clearPrivateBatchFiles() {
+      pendingBatchItems.clear();
+      queuedBatchIds.clear();
+      requestKeys.clear();
+      fileAnimalAssignments.clear();
+      history.length = 0;
+      lastShown = null;
+      lastBatchContext = null;
+      if (historyList) renderHistory();
+      if (batchList) renderBatch([]);
+      if (resultArea) resultArea.replaceChildren();
+      if (status) status.textContent = "";
+      if (input) {
+        try { setInputFiles([]); } catch (_error) { input.value = ""; }
+      }
     },
   };
 
@@ -43,6 +93,22 @@
     } catch (_error) {
       return {};
     }
+  }
+
+  function fileIdentity(file) {
+    return `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
+  }
+
+  function animalForFile(file) {
+    const assigned = fileAnimalAssignments.get(fileIdentity(file));
+    if (assigned) return { animal_id: assigned };
+    return linkedAnimal();
+  }
+
+  function stableRequestKey(file, fields) {
+    const fingerprint = JSON.stringify({ file: fileIdentity(file), fields });
+    if (!requestKeys.has(fingerprint)) requestKeys.set(fingerprint, newIdempotencyKey());
+    return requestKeys.get(fingerprint);
   }
 
   function retentionFlag() {
@@ -81,6 +147,8 @@
 
   const $ = (id) => document.getElementById(id);
   const input = $("image-input");
+  const cameraInput = $("camera-input");
+  const cameraButton = $("camera-button");
   const button = $("estimate-button");
   const cancelButton = $("cancel-button");
   const clearButton = $("clear-button");
@@ -181,7 +249,10 @@
     return ALLOWED_TYPES.has(file.type) || ALLOWED_EXTENSIONS.has(name.slice(name.lastIndexOf(".")));
   }
 
-  function fileProblem(file) {
+  function fileProblem(file, fileIndex, files) {
+    if (fileIndex >= MAX_BATCH_FILES) return "a batch can contain up to 20 photos";
+    if (files && files.slice(0, fileIndex).some((other) => fileIdentity(other) === fileIdentity(file))) return "duplicate photo — remove this copy";
+    if (files && files.slice(0, fileIndex).reduce((sum, other) => sum + other.size, file.size) > MAX_BATCH_INPUT_BYTES) return "selection exceeds 60 MB total";
     const lower = file.name.toLowerCase();
     const ext = lower.slice(lower.lastIndexOf("."));
     if (HEIC_EXTENSIONS.has(ext)) return "HEIC photos are not supported — export or convert to JPEG first";
@@ -338,7 +409,7 @@
     let ready = 0;
     files.forEach((file, fileIndex) => {
       const item = document.createElement("li");
-      const problem = fileProblem(file);
+      const problem = fileProblem(file, fileIndex, files);
       if (!problem) ready += 1;
       if (file.type.startsWith("image/")) {
         const thumb = document.createElement("img");
@@ -355,7 +426,32 @@
       const meta = document.createElement("span");
       meta.textContent = problem ? `${formatBytes(file.size)} · ${problem}` : `${formatBytes(file.size)} · ready`;
       item.append(name, meta);
+      const duplicate = files.slice(0, fileIndex).some((other) => fileIdentity(other) === fileIdentity(file));
+      if (duplicate) {
+        const warning = document.createElement("span");
+        warning.className = "warning-note";
+        warning.textContent = "Duplicate";
+        item.append(warning);
+      }
       if (problem) item.classList.add("invalid");
+      const animalSelect = $("animal-select");
+      if (animalSelect && animalSelect.options.length > 1) {
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", `Animal for ${file.name}`);
+        for (const option of Array.from(animalSelect.options)) {
+          const copy = document.createElement("option");
+          copy.value = option.value;
+          copy.textContent = option.value ? option.textContent : "No animal link";
+          select.append(copy);
+        }
+        select.value = fileAnimalAssignments.get(fileIdentity(file)) || animalSelect.value || "";
+        select.disabled = busy;
+        select.addEventListener("change", () => {
+          if (select.value) fileAnimalAssignments.set(fileIdentity(file), select.value);
+          else fileAnimalAssignments.delete(fileIdentity(file));
+        });
+        item.append(select);
+      }
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "batch-retry";
@@ -515,20 +611,20 @@
 
   function chunkBatchItems(items, names, indices) {
     const chunks = [];
-    let current = { items: [], names: [], indices: [], bytes: 2 };
+    let current = { items: [], names: [], indices: [] };
     for (let i = 0; i < items.length; i += 1) {
-      const size = JSON.stringify(items[i]).length + 64;
+      const candidate = current.items.concat(items[i]);
+      const size = new TextEncoder().encode(JSON.stringify({ items: candidate })).length;
       // Chunks respect both the shared 20 MB body cap and the server's
       // 20-items-per-batch limit, so large selections never get rejected whole.
       if (current.items.length > 0
-        && (current.bytes + size > BATCH_CHUNK_BYTES || current.items.length >= 20)) {
+        && (size > BATCH_CHUNK_BYTES || current.items.length >= 20)) {
         chunks.push(current);
-        current = { items: [], names: [], indices: [], bytes: 2 };
+        current = { items: [], names: [], indices: [] };
       }
       current.items.push(items[i]);
       current.names.push(names[i]);
       current.indices.push(indices[i]);
-      current.bytes += size;
     }
     if (current.items.length) chunks.push(current);
     return chunks;
@@ -879,7 +975,6 @@
     // stale as soon as the user corrects a measurement.
     const crossCheck = readTapeCrossCheck();
     const crossFields = crossCheck.skipped ? {} : crossCheck;
-    lastBatchContext.crossFields = crossFields;
     setBusy(true);
     cancelRequested = false;
     const retrySignal = new AbortController();
@@ -888,8 +983,9 @@
     try {
       const dataUrl = await fileToDataUrl(found.file);
       if (cancelRequested) return;
+      const fields = { ...profile, ...crossFields, ...animalForFile(found.file), ...retentionFlag() };
       const result = await requestEstimateWithRetry(
-        { image_base64: dataUrl, ...profile, ...crossFields, ...linkedAnimal(), ...retentionFlag() },
+        { image_base64: dataUrl, ...fields, idempotency_key: stableRequestKey(found.file, fields) },
         retrySignal.signal,
       );
       pushHistory(found.filename, result, "upload");
@@ -935,7 +1031,6 @@
     }
     const crossCheck = readTapeCrossCheck();
     const crossFields = crossCheck.skipped ? {} : crossCheck;
-    const animalLink = linkedAnimal();
     setBusy(true);
     cancelRequested = false;
     const batchSignal = new AbortController();
@@ -951,14 +1046,20 @@
     const retryFiles = [];
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
-      const problem = fileProblem(file);
+      const problem = fileProblem(file, index, files);
       if (problem) {
         failed += 1;
         done += 1;
-        const label = problem === "unsupported type" ? "unsupported file type" : "file is too large";
-        const hint = problem === "unsupported type"
+        const label = problem;
+        const hint = problem.includes("unsupported")
           ? "Use JPEG, PNG, WebP, BMP, or GIF."
-          : `Choose a file under ${formatBytes(MAX_FILE_BYTES)}.`;
+          : problem.includes("duplicate")
+            ? "Remove the duplicate or keep the first copy."
+            : problem.includes("20 photos")
+              ? "Remove photos until the selection contains no more than 20."
+              : problem.includes("60 MB")
+                ? "Keep the total source photos under 60 MB."
+                : `Choose a file under ${formatBytes(MAX_FILE_BYTES)}.`;
         showResult(`${file.name}: ${label}.`, hint);
         batchEntries.push({ filename: file.name, label: `${label}`, ok: false, retryable: false });
         renderBatch(batchEntries);
@@ -984,7 +1085,12 @@
             cancelled = true;
             break;
           }
-          validItems.push({ image_base64: dataUrl, ...profile, ...crossFields, ...animalLink, ...retentionFlag() });
+          const fields = { ...profile, ...crossFields, ...animalForFile(item.file), ...retentionFlag() };
+          const request = { image_base64: dataUrl, ...fields, idempotency_key: stableRequestKey(item.file, fields) };
+          const encodedBytes = new TextEncoder().encode(JSON.stringify({ items: [request] })).length;
+          if (encodedBytes > MAX_ITEM_BODY_BYTES) throw new Error("This photo is still too large after resizing. Choose a smaller image.");
+          item.fields = fields;
+          validItems.push(request);
           validNames.push(item.filename);
           validIndices.push(item.fileIndex);
         } catch (error) {
@@ -1514,59 +1620,132 @@
       return;
     }
     const files = Array.from(input.files || []);
-    let payload = null;
-    let label = "";
-    const ready = files.find((file) => !fileProblem(file));
-    if (ready) {
-      setStatus(`Preparing ${ready.name} for background estimation…`);
-      try {
-        const dataUrl = await fileToDataUrl(ready);
-        payload = { image_base64: dataUrl, ...profile, ...linkedAnimal(), ...retentionFlag(), idempotency_key: newIdempotencyKey() };
-        label = ready.name;
-      } catch (error) {
-        setStatus(error instanceof Error ? error.message : "Could not read file.");
+    if (files.length) {
+      const ready = files.map((file, index) => ({ file, index })).filter(({ file, index }) => !fileProblem(file, index, files));
+      if (!ready.length) {
+        setStatus("This selection has no valid photos. Remove invalid or duplicate items before queueing it.");
         return;
       }
+      try {
+        const jobsResponse = await fetch("/api/jobs", { credentials: "same-origin", cache: "no-store" });
+        const jobsData = jobsResponse.ok ? await jobsResponse.json() : {};
+        const jobs = Array.isArray(jobsData.jobs) ? jobsData.jobs : [];
+        const open = jobs.filter((job) => job.status === "queued" || job.status === "active").length;
+        const capacity = Math.max(0, 20 - open);
+        if (capacity === 0) {
+          setStatus("The background queue is full. Finish or cancel jobs before queueing photos.");
+          return;
+        }
+        const selected = ready.slice(0, capacity);
+        const prepared = selected.map(({ file }) => {
+          const fields = { ...profile, ...animalForFile(file), ...retentionFlag() };
+          return { file, fields, key: stableRequestKey(file, fields) };
+        });
+        const selectionKey = JSON.stringify(prepared.map((item) => item.key));
+        const existingBatch = queuedBatchIds.get(selectionKey);
+        if (existingBatch) {
+          setStatus("This selection already has a background batch. Opening its current status.");
+          if (window.aifPages) window.aifPages.navigate(`/uploads/${encodeURIComponent(existingBatch)}`);
+          return;
+        }
+        const response = await fetch("/api/upload-batches", {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+          body: JSON.stringify({ item_count: prepared.length }),
+        });
+        const batch = response.ok ? await response.json() : {};
+        if (!response.ok || typeof batch.id !== "string") {
+          setStatus("Could not create the upload batch. Try again.");
+          return;
+        }
+        queuedBatchIds.set(selectionKey, batch.id);
+        let queued = 0;
+        let stopped = false;
+        const acceptedFiles = new Set();
+        for (let batchIndex = 0; batchIndex < prepared.length; batchIndex += 1) {
+          const { file, fields, key } = prepared[batchIndex];
+          pendingBatchItems.set(`${batch.id}:${batchIndex}`, { file, fields, key });
+          setStatus(`Preparing photo ${queued + 1} of ${prepared.length} — ${file.name}…`);
+          const dataUrl = await fileToDataUrl(file);
+          const payload = {
+            image_base64: dataUrl, ...fields,
+            idempotency_key: key,
+            batch_id: batch.id, batch_index: batchIndex, filename: file.name,
+          };
+          if (new TextEncoder().encode(JSON.stringify(payload)).length > MAX_ITEM_BODY_BYTES) {
+            setStatus(`${file.name} is still too large after resizing. This item was not queued.`);
+            pendingBatchItems.delete(`${batch.id}:${batchIndex}`);
+            continue;
+          }
+          const queuedResponse = await fetch("/api/jobs", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+            body: JSON.stringify(payload),
+          });
+          const result = await queuedResponse.json().catch(() => ({}));
+          if (!queuedResponse.ok) {
+            pendingBatchItems.delete(`${batch.id}:${batchIndex}`);
+            if (queuedResponse.status === 429) {
+              setStatus("The queue filled while this batch was being submitted. The accepted photos are saved; the remaining photos were not queued.");
+              stopped = true;
+              break;
+            }
+            setStatus(typeof result.error === "string" ? result.error : "A photo could not be queued. The other accepted photos remain saved.");
+            stopped = true;
+            break;
+          }
+          queued += 1;
+          acceptedFiles.add(fileIdentity(file));
+        }
+        if (acceptedFiles.size) {
+          setInputFiles(files.filter((file) => !acceptedFiles.has(fileIdentity(file))));
+        }
+        if (queued > 0) {
+          const capacityNote = selected.length < ready.length ? ` Queue capacity allowed ${selected.length}; reselect the remaining photos later.` : "";
+          setStatus(`${queued} of ${prepared.length} photo${prepared.length === 1 ? "" : "s"} queued${stopped ? "; remaining items need attention" : ""}.${capacityNote}`);
+          if (window.aifPages) window.aifPages.navigate(`/uploads/${encodeURIComponent(batch.id)}`);
+          document.dispatchEvent(new CustomEvent("aif-jobs-changed"));
+        } else {
+          pendingBatchItems.forEach((_item, cacheKey) => { if (cacheKey.startsWith(`${batch.id}:`)) pendingBatchItems.delete(cacheKey); });
+          setStatus("No photos were queued. Review the selection and try again.");
+        }
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "The backend could not be reached. Any accepted jobs remain in Uploads.");
+      }
+      return;
     } else {
+      let payload;
       const girth = tapeGirth ? Number.parseFloat(tapeGirth.value) : NaN;
       const length = tapeLength ? Number.parseFloat(tapeLength.value) : NaN;
       if (!Number.isFinite(girth) || !Number.isFinite(length) || girth < 50 || girth > 300 || length < 50 || length > 300) {
         setStatus("Choose a valid image or enter both tape measurements (50–300 cm) first.");
         return;
       }
-      payload = { heart_girth_cm: girth, body_length_cm: length, ...profile, ...linkedAnimal(), idempotency_key: newIdempotencyKey() };
-      label = `Tape ${girth}×${length} cm`;
-    }
-    setStatus(`Queueing background estimate for ${label}…`);
-    try {
-      const response = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-        body: JSON.stringify(payload),
-        credentials: "same-origin",
-      });
-      let data = {};
+      const fields = { heart_girth_cm: girth, body_length_cm: length, ...profile, ...linkedAnimal() };
+      payload = { ...fields, idempotency_key: newIdempotencyKey() };
+      setStatus("Queueing background tape estimate…");
       try {
-        data = await response.json();
-      } catch (_error) {
-        data = {};
-      }
-      if (!response.ok) {
-        const code = typeof data.code === "string" ? data.code : "";
-        setStatus(code === "quota_exceeded" || code === "rate_limited"
-          ? "Too many queued jobs or estimates — wait for some to finish."
-          : "Could not queue the background estimate.");
-        return;
-      }
-      const id = typeof data.id === "string" ? data.id : "";
-      setStatus(id ? `Queued as background job ${id.slice(0, 8)} — see Account for its result.` : "Queued.");
-      try {
+        const response = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+          body: JSON.stringify(payload),
+          credentials: "same-origin",
+        });
+        let data = {};
+        try { data = await response.json(); } catch (_error) { data = {}; }
+        if (!response.ok) {
+          const code = typeof data.code === "string" ? data.code : "";
+          setStatus(code === "quota_exceeded" || code === "rate_limited"
+            ? "Too many queued jobs or estimates — wait for some to finish."
+            : "Could not queue the background estimate.");
+          return;
+        }
+        const id = typeof data.id === "string" ? data.id : "";
+        setStatus(id ? `Queued as background job ${id.slice(0, 8)} — see Uploads for its result.` : "Queued.");
         document.dispatchEvent(new CustomEvent("aif-jobs-changed"));
-      } catch (_eventError) {
-        // The jobs panel refreshes on next Account visit regardless.
+      } catch (_error) {
+        setStatus("The backend could not be reached.");
       }
-    } catch (_error) {
-      setStatus("The backend could not be reached.");
     }
   }
 
@@ -1575,6 +1754,7 @@
   if (backgroundButton) backgroundButton.addEventListener("click", runBackground);
   cancelButton.addEventListener("click", requestCancel);
   if (clearButton) clearButton.addEventListener("click", clearSelection);
+  if (cameraButton && cameraInput) cameraButton.addEventListener("click", () => cameraInput.click());
   if (tapeButton) tapeButton.addEventListener("click", runTape);
   demoRetry.addEventListener("click", loadDemos);
   demoSelect.addEventListener("change", () => {
@@ -1585,6 +1765,13 @@
   historyClear.addEventListener("click", clearHistory);
   if (historyExport) historyExport.addEventListener("click", exportHistoryCsv);
   input.addEventListener("change", renderFileList);
+  if (cameraInput) cameraInput.addEventListener("change", () => {
+    const selected = Array.from(cameraInput.files || []);
+    if (selected.length) appendInputFiles(selected.slice(0, 1));
+    cameraInput.value = "";
+  });
+  document.addEventListener("aif-animals-loaded", renderFileList);
+  document.addEventListener("aif-page-route", renderFileList);
   document.addEventListener("dragover", (event) => {
     const types = event.dataTransfer ? Array.from(event.dataTransfer.types || []) : [];
     if (types.includes("Files")) event.preventDefault();

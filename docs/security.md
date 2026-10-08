@@ -84,7 +84,10 @@ header. Codes: `missing_body`, `bad_request`, `invalid_json`,
   migrations, encrypted snapshot backups.
 - **Argon2id + random 256-bit tokens** via maintained crates; no custom
   crypto; token hashes only in the DB.
-- **Transient-only photos by default**; optional opt-in retention
+- **No permanent photo retention by default**; synchronous estimates use
+  transient processing, while background jobs temporarily store their request
+  payloads in SQLite until terminal status. Terminal payloads are cleared and
+  backup snapshots remove all job payloads. Optional opt-in retention
   (`AIF_RETAIN_PHOTOS=1`) stores metadata-stripped bytes under opaque ids
   with owner-only downloads, quotas, TTL expiry, and sweep cleanup.
 - **Durable job queue for background estimates**: FIFO worker, bounded

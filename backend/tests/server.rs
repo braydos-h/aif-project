@@ -1703,6 +1703,14 @@ fn js_uses_batch_endpoint_with_retry_and_file_helpers() {
 }
 
 #[test]
+fn batch_cancel_explains_active_inference_can_finish() {
+    let js = web_file("account.js");
+    assert!(js.contains(
+        "Cancelling removes pending photos. Active inference may finish and its result can still be saved."
+    ));
+}
+
+#[test]
 fn css_has_clear_and_retry_styles() {
     let css = web_file("styles.css");
     assert!(css.contains("#clear-button"));
@@ -2337,6 +2345,133 @@ fn static_account_assets_are_served_and_unknown_routes_404() {
 }
 
 #[test]
+fn application_pages_are_explicit_and_detail_ids_are_validated() {
+    let server = setup_none();
+    for path in [
+        "/login",
+        "/invite",
+        "/recover",
+        "/reset-password",
+        "/dashboard",
+        "/estimate/photo",
+        "/estimate/batch",
+        "/estimate/tape",
+        "/uploads",
+        "/history",
+        "/animals",
+        "/photos",
+        "/settings/profile",
+        "/settings/security",
+        "/settings/privacy",
+        "/operator",
+        "/operator/invites",
+        "/operator/users",
+        "/operator/activity",
+        "/help",
+        "/privacy",
+        "/animals/animal-123",
+        "/history/history_123",
+        "/uploads/job-123",
+    ] {
+        let (status, headers, body) = get_raw(&server, path);
+        assert_eq!(status, 200, "route {path}");
+        assert!(headers["content-type"].contains("text/html"));
+        assert!(String::from_utf8_lossy(&body).contains("page-content"));
+    }
+    for path in ["/router.js", "/pages.css"] {
+        let (status, _, _) = get_raw(&server, path);
+        assert_eq!(status, 200, "asset {path}");
+    }
+    for path in ["/animals/%2e%2e%2fsecret", "/unlisted/page"] {
+        let (status, _, _) = get_raw(&server, path);
+        assert_eq!(status, 404, "unknown route {path}");
+    }
+}
+
+#[test]
+fn upload_batches_keep_partial_jobs_private_and_clear_terminal_payloads() {
+    let (server, dir) = setup_auth(&[], "upload-batches");
+    let token1 = cli_invite(&dir, "a@example.com", "operator");
+    let (_, _, _, first) = accept_invite(&server, &token1, "long enough password", "A");
+    let first = first.unwrap();
+    let token2 = cli_invite(&dir, "b@example.com", "user");
+    let (_, _, _, second) = accept_invite(&server, &token2, "another long password", "B");
+    let second = second.unwrap();
+
+    let (status, _, _) = authed(&server, "GET", "/api/upload-batches", None, None);
+    assert_eq!(status, 401);
+    let (status, _, batch) = authed(
+        &server,
+        "POST",
+        "/api/upload-batches",
+        Some(&first),
+        Some(r#"{"item_count":2}"#),
+    );
+    assert_eq!(status, 201, "{batch}");
+    let batch_id = batch["id"].as_str().unwrap();
+    let job_body = format!(
+        r#"{{"heart_girth_cm":180,"body_length_cm":150,"idempotency_key":"batch-item-key","batch_id":"{}","batch_index":0,"filename":"cow-one.jpg"}}"#,
+        batch_id
+    );
+    let (status, _, job) = authed(&server, "POST", "/api/jobs", Some(&first), Some(&job_body));
+    assert_eq!(status, 202, "{job}");
+    assert_eq!(job["filename"], "cow-one.jpg");
+    assert_eq!(job["batch_index"], 0);
+    let (status, _, replay) = authed(&server, "POST", "/api/jobs", Some(&first), Some(&job_body));
+    assert_eq!(status, 202);
+    assert_eq!(replay["replayed"], true);
+    let path = format!("/api/upload-batches/{batch_id}");
+    let (status, _, _) = authed(&server, "GET", &path, Some(&second), None);
+    assert_eq!(status, 404);
+    let cancel_path = format!("{path}/cancel");
+    let (status, _, cancelled) = authed(&server, "POST", &cancel_path, Some(&first), Some("{}"));
+    assert_eq!(status, 200, "{cancelled}");
+    assert_eq!(cancelled["cancelled_count"], 1);
+    assert_eq!(cancelled["items"][0]["status"], "cancelled");
+    let job_id = job["id"].as_str().unwrap();
+    let job_path = format!("/api/jobs/{job_id}");
+    let (status, _, after_cancel) = authed(&server, "GET", &job_path, Some(&first), None);
+    assert_eq!(status, 200);
+    assert_eq!(after_cancel["status"], "cancelled");
+    let retry_path = format!("{path}/items/0/retry");
+    let retry_body =
+        r#"{"heart_girth_cm":180,"body_length_cm":150,"idempotency_key":"batch-item-key"}"#;
+    let (status, _, _) = authed(
+        &server,
+        "POST",
+        &retry_path,
+        Some(&second),
+        Some(retry_body),
+    );
+    assert_eq!(status, 404, "another user cannot retry this batch item");
+    let (status, _, wrong_key) = authed(
+        &server,
+        "POST",
+        &retry_path,
+        Some(&first),
+        Some(r#"{"heart_girth_cm":180,"body_length_cm":150,"idempotency_key":"different-key"}"#),
+    );
+    assert_eq!(
+        status, 400,
+        "retry must reuse its original idempotency key: {wrong_key}"
+    );
+    let (status, _, retried) = authed(&server, "POST", &retry_path, Some(&first), Some(retry_body));
+    assert_eq!(status, 202, "retry should be accepted: {retried}");
+    assert_eq!(
+        retried["submitted_count"], 1,
+        "retry reuses the original item row"
+    );
+    assert_ne!(retried["items"][0]["status"], "cancelled");
+    let (status, _, jobs) = authed(&server, "GET", "/api/jobs", Some(&first), None);
+    assert_eq!(status, 200);
+    assert_eq!(
+        jobs["jobs"].as_array().unwrap().len(),
+        1,
+        "retry must not duplicate saved jobs"
+    );
+}
+
+#[test]
 fn account_security_headers_and_deletion() {
     let (server, dir) = setup_auth(&[], "headers");
     let token = cli_invite(&dir, "a@example.com", "user");
@@ -2751,6 +2886,17 @@ fn js_guards_cover_account_assets() {
     ] {
         assert!(js.contains(needle), "account.js missing {}", needle);
     }
+    let router = web_file("router.js");
+    for needle in [
+        "popstate",
+        "session_probe_failed",
+        "aria-current",
+        "Show password",
+    ] {
+        assert!(router.contains(needle), "router.js missing {}", needle);
+    }
+    assert!(!router.contains("innerHTML"));
+    assert!(!router.contains("localStorage"));
     let html = web_file("index.html");
     for needle in [
         r#"id="auth-bar""#,
@@ -2762,6 +2908,8 @@ fn js_guards_cover_account_assets() {
         r#"id="operator-panel""#,
         "/account.js",
         "/account.css",
+        "/router.js",
+        "/pages.css",
         "no public registration",
         "HEIC",
     ] {
@@ -2941,7 +3089,7 @@ fn photo_retention_off_by_default() {
     assert!(summary["photo_policy"]
         .as_str()
         .unwrap()
-        .contains("transient-only"));
+        .contains("no permanent photo retention"));
 }
 
 #[test]
@@ -3139,6 +3287,15 @@ fn job_queue_depth_is_bounded() {
     );
     assert_eq!(status, 429);
     assert_eq!(body["code"], "rate_limited");
+    let (status, _, replay) = authed(
+        &server,
+        "POST",
+        "/api/jobs",
+        Some(&session),
+        Some(r#"{"heart_girth_cm": 180, "body_length_cm": 150, "idempotency_key": "q-0"}"#),
+    );
+    assert_eq!(status, 202, "exact replay must work at capacity: {replay}");
+    assert_eq!(replay["replayed"], true);
 }
 
 #[test]

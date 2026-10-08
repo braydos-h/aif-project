@@ -44,13 +44,13 @@ pub(crate) fn handle_summary(
         .unwrap_or(0);
     let photo_policy = if state.config.retain_photos {
         format!(
-            "opt-in retention: kept {} bytes of {} MiB quota, expiring after {} days; excluded from database backups",
+            "opt-in photo retention: {} bytes of {} MiB quota, expiring after {} days; retained photo bytes are excluded from backups; pending jobs temporarily hold request payloads until terminal status",
             photos,
             state.config.photo_quota_mb,
             state.config.photo_ttl_days,
         )
     } else {
-        "transient-only: uploaded photos are sent to the AI provider for the estimate and are never stored on this server".to_string()
+        "no permanent photo retention: synchronous requests use memory; background jobs temporarily store photo payloads in SQLite until terminal status; backup snapshots clear every job payload".to_string()
     };
     Response::json(
         200,

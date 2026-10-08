@@ -39,7 +39,7 @@ body {
 }
 
 main {
-  width: min(640px, calc(100% - 32px));
+  width: min(960px, calc(100% - 32px));
   margin: 0 auto;
   padding: 32px 0 48px;
   display: grid;

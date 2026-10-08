@@ -9,6 +9,8 @@ pub(crate) const STYLES_CSS: &[u8] = include_bytes!("../../../web/styles.css");
 pub(crate) const APP_JS: &[u8] = include_bytes!("../../../web/app.js");
 pub(crate) const ACCOUNT_JS: &[u8] = include_bytes!("../../../web/account.js");
 pub(crate) const ACCOUNT_CSS: &[u8] = include_bytes!("../../../web/account.css");
+pub(crate) const ROUTER_JS: &[u8] = include_bytes!("../../../web/router.js");
+pub(crate) const PAGES_CSS: &[u8] = include_bytes!("../../../web/pages.css");
 
 /// The only demo files exposed by the server. They are compiled into the
 /// binary so the route cannot escape the approved `cows/` directory.

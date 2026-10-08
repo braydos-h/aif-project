@@ -5,8 +5,8 @@
 # AIF_BACKUP_PASSPHRASE (never a committed file).
 #
 # Retention: keeps the last 14 daily backups in BACKUP_DIR; the operator
-# copies them off-server (see docs/operations.md). Photos need no backup:
-# the service is transient-only and stores no photos.
+# copies them off-server (see docs/operations.md). Background photo payloads
+# are temporary in SQLite and are removed from the snapshot before encryption.
 set -eu
 
 DATA_DIR="${1:-/var/lib/aif}"
@@ -31,6 +31,9 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # Online-safe snapshot: SQLite backup API, not a raw file copy.
 sqlite3 "$DB" ".backup '$TMP/aif.db'"
+# A restore contains estimate history, not queued photos. Mark unfinished jobs
+# expired and clear all job payloads from the snapshot before it is encrypted.
+sqlite3 "$TMP/aif.db" "UPDATE jobs SET status = 'expired', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), payload = '{}', error_code = 'backup_restore', error_message = 'Queued work was omitted from this backup' WHERE status IN ('queued', 'active'); UPDATE jobs SET payload = '{}';"
 printf '%s' "$STAMP" > "$TMP/stamp.txt"
 tar -czf "$TMP/aif-$STAMP.tar.gz" -C "$TMP" aif.db stamp.txt
 openssl enc -aes-256-cbc -salt -pbkdf2 -in "$TMP/aif-$STAMP.tar.gz" \

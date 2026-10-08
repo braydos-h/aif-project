@@ -84,9 +84,40 @@ jobs:
         run: cargo build --release --manifest-path backend/Cargo.toml
 
       - name: Validate WebUI syntax
-        run: node --check web/app.js && node --check web/account.js
+        run: node --check web/router.js && node --check web/app.js && node --check web/account.js && node --check web/tests/journeys.test.mjs
 
       - name: Run reference evaluation (synthetic fixture)
         # Real-data acceptance stays blocked (eval/README.md); this guards
         # the framework, schema, and gate plumbing on synthetic rows.
         run: AIF_AI_BACKEND=none cargo run --manifest-path backend/Cargo.toml --bin aif-eval -- --dataset eval/fixtures/example.json --out /tmp/opencode/eval-report.json
+
+  browser:
+    name: browser journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install browser test dependency
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build test server
+        run: cargo build --release --manifest-path backend/Cargo.toml --bin aif-backend
+
+      - name: Run invited-user browser journey
+        env:
+          AIF_BACKEND_BIN: backend/target/release/aif-backend
+        run: npm run test:browser
