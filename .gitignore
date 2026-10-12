@@ -4,9 +4,15 @@ dist/
 node_modules/
 *.pptx
 
-# Rust (backend)
-backend/target/
+# Rust (web backend)
+web/backend/target/
 target/
+
+# Xcode
+ios/DerivedData/
+ios/build/
+ios/**/xcuserdata/
+*.xcuserstate
 
 # OS / editor noise
 .DS_Store

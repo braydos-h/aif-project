@@ -1,0 +1,33 @@
+name: iOS
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Xcode build and tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select an available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          simulator_id="$(xcrun simctl list devices available -j | python3 -c 'import json,re,sys; devices=json.load(sys.stdin)["devices"]; runtimes=sorted(devices, key=lambda value: tuple(map(int,re.search(r"iOS-(\d+)-(\d+)",value).groups())) if re.search(r"iOS-(\d+)-(\d+)",value) else (0,0), reverse=True); candidates=[device for runtime in runtimes for device in devices[runtime] if device.get("isAvailable") and device.get("name","").startswith("iPhone")]; print(candidates[0]["udid"] if candidates else "")')"
+          test -n "$simulator_id"
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
+
+      - name: Build and run unit and UI tests
+        run: >-
+          xcodebuild -project ios/AIF.xcodeproj -scheme AIF
+          -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}"
+          -derivedDataPath /tmp/aif-derived CODE_SIGNING_ALLOWED=NO test

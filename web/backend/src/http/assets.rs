@@ -4,13 +4,13 @@
 //! `include_bytes!` and demo images come from a fixed list, so no request
 //! can read an arbitrary filesystem path.
 
-pub(crate) const INDEX_HTML: &[u8] = include_bytes!("../../../web/index.html");
-pub(crate) const STYLES_CSS: &[u8] = include_bytes!("../../../web/styles.css");
-pub(crate) const APP_JS: &[u8] = include_bytes!("../../../web/app.js");
-pub(crate) const ACCOUNT_JS: &[u8] = include_bytes!("../../../web/account.js");
-pub(crate) const ACCOUNT_CSS: &[u8] = include_bytes!("../../../web/account.css");
-pub(crate) const ROUTER_JS: &[u8] = include_bytes!("../../../web/router.js");
-pub(crate) const PAGES_CSS: &[u8] = include_bytes!("../../../web/pages.css");
+pub(crate) const INDEX_HTML: &[u8] = include_bytes!("../../../index.html");
+pub(crate) const STYLES_CSS: &[u8] = include_bytes!("../../../styles.css");
+pub(crate) const APP_JS: &[u8] = include_bytes!("../../../app.js");
+pub(crate) const ACCOUNT_JS: &[u8] = include_bytes!("../../../account.js");
+pub(crate) const ACCOUNT_CSS: &[u8] = include_bytes!("../../../account.css");
+pub(crate) const ROUTER_JS: &[u8] = include_bytes!("../../../router.js");
+pub(crate) const PAGES_CSS: &[u8] = include_bytes!("../../../pages.css");
 
 /// The only demo files exposed by the server. They are compiled into the
 /// binary so the route cannot escape the approved `cows/` directory.

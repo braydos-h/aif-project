@@ -1,25 +1,32 @@
-# AIF-PROJECT
+# AIF Project
 
-Cow Weight Estimator is a small local web application that turns a cow image
-into a rough weight estimate. The Rust backend serves the browser UI and the
-JSON API from one process. No Node.js, npm, Python web framework, or external
-CDN is required.
+This repository contains two independent cattle-management applications:
 
-This is an AI estimate, not a replacement for a scale, veterinary advice, or
-an official livestock record.
+- [`web/`](web/README.md) — the original Rust-powered web application and
+  browser interface.
+- [`ios/`](ios/README.md) — a new native SwiftUI iPhone app designed for
+  offline animal records, tape estimates, and optional user-configured AI.
+
+The iOS app does not need the web backend. The web app remains independently
+deployable and keeps its existing browser and API functionality.
+
+The web photo estimate is an AI estimate, not a replacement for a scale,
+veterinary advice, or an official livestock record.
 
 ## Quick start
 
-Prerequisites: Rust (pinned to 1.89.0 by `rust-toolchain.toml`; minimum
-supported version 1.75 per `backend/Cargo.toml`; Windows also needs the MSVC
+Prerequisites for the web app: Rust (pinned to 1.89.0 by
+`web/rust-toolchain.toml`; minimum supported version 1.75 per
+`web/backend/Cargo.toml`; Windows also needs the MSVC
 Build Tools linker, or use the GNU toolchain), plus a browser.
 `node` is only needed for the `node --check web/app.js` syntax check that CI
-runs. `install.ps1` automates the Windows setup (installs Rust via winget,
+runs. `web/install.ps1` automates the Windows setup (installs Rust via winget,
 builds the release binary, creates a desktop shortcut).
 
 Build the Rust server, then start the application:
 
 ```powershell
+cd web
 cargo build --release --manifest-path backend/Cargo.toml
 backend\target\release\aif-backend.exe --host 0.0.0.0 --port 8080
 ```
@@ -31,12 +38,12 @@ only. Exposed instances should set `AIF_REQUIRE_AUTH=1` (always in
 production).
 
 For a shortcut that starts the server and opens the browser automatically,
-double-click `start_gui.bat` (or run `start_gui.ps1`); they launch the same
-binary and open the WebUI. `start.sh` is the Linux/macOS equivalent and
-`install.ps1` is the Windows first-time setup script. All launchers use
+double-click `web/start_gui.bat` (or run `web/start_gui.ps1`); they launch the same
+binary and open the WebUI. `web/start.sh` is the Linux/macOS equivalent and
+`web/install.ps1` is the Windows first-time setup script. All launchers use
 the fixed default `0.0.0.0:8080` and take no port argument; if the port is
 taken, start the binary manually with a different `--port` (e.g. `--port
-8081`). The supported UI is the Rust-served WebUI. Production (`deploy/`)
+8081`). The supported UI is the Rust-served WebUI. Production (`web/deploy/`)
 stays loopback-only behind Caddy and is unchanged.
 
 CLI usage: `aif-backend [--host HOST] [--port PORT]`. Both `--flag value`
@@ -93,7 +100,7 @@ When the server requires authentication (`AIF_REQUIRE_AUTH=1`, always in
 production), estimates are saved to your private server-side history with
 source/model/version stamps; anonymous estimates are never saved. Accounts
 require an operator invitation — there is no public registration. See
-`docs/privacy.md` for data handling and `docs/recovery.md` for the
+`web/docs/privacy.md` for data handling and `web/docs/recovery.md` for the
 operator-relayed invite/recovery flow.
 
 ## Architecture
@@ -339,10 +346,10 @@ Invoke-RestMethod http://127.0.0.1:8080/estimate-weight `
 
 ## Configuration
 
-Copy `.env.example` to `.env` for server defaults (`Copy-Item .env.example
-.env`). The server probes the current directory first, then the binary's
-directory, then the source root. Environment variables that
-are already set take precedence over `.env`.
+Copy `web/.env.example` to `web/.env` for server defaults
+(`Copy-Item web/.env.example web/.env`). The server probes the current
+directory first, then the binary's directory, then the web source root.
+Environment variables that are already set take precedence over `.env`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -384,29 +391,31 @@ aif-backend --list-users | --list-invites
 aif-backend --revoke-invite <id> | --delete-user <email> | --create-recovery <email>
 ```
 
-Estimate quality is gated by a repeatable evaluation (`eval/README.md`):
+Estimate quality is gated by a repeatable evaluation (`web/eval/README.md`):
 
 ```sh
+cd web
 cargo run --manifest-path backend/Cargo.toml --bin aif-eval -- \
   --dataset eval/fixtures/example.json --out /tmp/opencode/eval-report.json
 ```
 
 Production deployment, operations, security, privacy, and recovery flows
-live in `docs/` (`deployment.md`, `operations.md`, `security.md`,
-`privacy.md`, `recovery.md`); service units and proxy config in `deploy/`.
+live in `web/docs/` (`deployment.md`, `operations.md`, `security.md`,
+`privacy.md`, `recovery.md`); service units and proxy config in `web/deploy/`.
 
 ## Development and tests
 
-Requirements are Rust stable for the backend. The frontend is plain
-HTML/CSS/JavaScript and has no package install step.
+Run Rust commands from `web/` so the pinned toolchain is selected. The
+frontend is plain HTML/CSS/JavaScript and has no package install step.
 
 ```powershell
+cd web
 cargo fmt --manifest-path backend/Cargo.toml
 cargo test --manifest-path backend/Cargo.toml
 cargo build --release --manifest-path backend/Cargo.toml
 ```
 
-The integration tests (`backend/tests/server.rs`) spawn the backend binary
+The integration tests (`web/backend/tests/server.rs`) spawn the backend binary
 on a free local port over real sockets. Set `AIF_BACKEND_BIN` to override
 the binary path when needed.
 
@@ -416,7 +425,7 @@ the binary path when needed.
   and open a new terminal so `PATH` refreshes.
 - `link.exe not found` (Windows) — install the MSVC Build Tools, or build
   with the GNU toolchain instead.
-- `Error: backend binary not found` — run `cargo build --release
+- `Error: backend binary not found` — from `web/`, run `cargo build --release
   --manifest-path backend/Cargo.toml` first; the launchers never build it.
 - Port 8080 in use — start with `--port 8081` and open that URL instead.
 - `502 estimation_failed` mentioning an API key — set `OLLAMA_API_KEY` (create
@@ -426,23 +435,19 @@ the binary path when needed.
   the URL host is blocked (loopback/private/metadata hosts are refused).
 - `503 server_busy` — more than 64 connections arrived at once; wait a moment
   and retry (the WebUI retries once automatically).
-- `.env` not picked up — copy `.env.example` to `.env`
-  (`Copy-Item .env.example .env`); the server probes the current directory,
+- `.env` not picked up — copy `web/.env.example` to `web/.env`
+  (`Copy-Item web/.env.example web/.env`); the server probes the current directory,
   then the binary's directory, then the source root.
 
 ## Repository layout
 
 ```text
-backend/src/       Rust HTTP server, config, validation, parsing, Ollama, cache
-backend/src/bin/   aif-eval reference-dataset evaluation binary
-backend/tests/     Real-HTTP integration tests + static WebUI guards
-web/               Rust-served WebUI assets (estimator + account UI)
-cows/              Approved bundled demo images
-deploy/            systemd unit, Caddyfile, install/update/rollback/backup/restore
-docs/              deployment, operations, security, privacy, recovery guides
-eval/              estimate-quality framework, fixtures, evaluation README
-start_gui.bat/.ps1 Windows launchers (release binary + browser)
-start.sh           Linux/macOS launcher
-install.ps1        Windows first-time setup (Rust install + build + shortcut)
-.github/workflows/ CI (fmt/clippy/test/build + WebUI check) and release build
+web/backend/       Rust web server, API, persistence, evaluation binary, and tests
+web/               Browser HTML, CSS, JavaScript, assets, and npm browser tests
+web/cows/          Approved bundled web demo images
+web/deploy/        Web server units, proxy, install/update/backup/restore
+web/docs/          Web deployment, operations, security, privacy, and recovery
+web/eval/          Web estimate-quality framework and fixtures
+ios/               Independent native SwiftUI iPhone app and Xcode project
+.github/workflows/ CI for both products and the web release build
 ```

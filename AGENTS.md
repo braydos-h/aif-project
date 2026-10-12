@@ -10,35 +10,38 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and common changes.
 
 ## What this is
 
-Cow Weight Estimator is a Rust HTTP server that also serves a static browser
-WebUI. There is no Python runtime — the backend, the tests, and the launch
-path are all Rust (plus plain browser HTML/CSS/JavaScript).
-`start_gui.bat` / `start_gui.ps1` launch the release binary and open the
+This repository contains two independent apps: the Rust HTTP server and
+browser WebUI under `web/`, plus a native SwiftUI iPhone app under `ios/`.
+There is no Python runtime in either product. The iOS app does not depend on
+the server or wrap the browser UI.
+`web/start_gui.bat` / `web/start_gui.ps1` launch the release binary and open the
 WebUI in a browser.
 
 Important paths:
 
 - `web/index.html`, `web/styles.css`, `web/pages.css`, `web/router.js`, `web/app.js`, `web/account.js` — browser UI and direct page routes.
-- `backend/src/http/` — threaded HTTP/1.1 server (`server.rs` listener loop,
+- `web/backend/src/http/` — threaded HTTP/1.1 server (`server.rs` listener loop,
   `mod.rs` dispatch, `response.rs` envelopes/headers, `request_id.rs`,
   `assets.rs` static/demo registry, `validation.rs` runtime option checks,
   `handlers.rs` info/demo/metrics routes, `estimate.rs` estimator API,
   `upload_batches.rs` owner-scoped batch tracking and retries).
-- `backend/src/config/` — defaults and `Config` (`mod.rs`), `.env` loading
+- `web/backend/src/config/` — defaults and `Config` (`mod.rs`), `.env` loading
   (`env.rs`), unit conversion (`units.rs`).
-- `backend/src/validate/` — image references (`mod.rs`), base64 codec
+- `web/backend/src/validate/` — image references (`mod.rs`), base64 codec
   (`base64.rs`), magic-byte checks (`image.rs`), URL fetching (`fetch.rs`).
-- `backend/src/parse/` — weight extraction (`mod.rs` orchestration,
+- `web/backend/src/parse/` — weight extraction (`mod.rs` orchestration,
   `structured.rs` JSON blocks, `text.rs` free-text fallback).
-- `backend/src/fallback.rs` — deterministic SHA-256-derived offline estimate.
-- `backend/src/tape.rs` — Schaeffer tape estimator, ranges, dosing disclaimer.
-- `backend/src/cache.rs` — in-memory TTL cache.
-- `backend/src/ollama/` — Ollama backend (`mod.rs` orchestration,
+- `web/backend/src/fallback.rs` — deterministic SHA-256-derived offline estimate.
+- `web/backend/src/tape.rs` — Schaeffer tape estimator, ranges, dosing disclaimer.
+- `web/backend/src/cache.rs` — in-memory TTL cache.
+- `web/backend/src/ollama/` — Ollama backend (`mod.rs` orchestration,
   `client.rs` transport/retry, `response.rs` reply parsing,
   `cache_key.rs` cache keys/URL host).
-- `backend/src/hash.rs` — shared SHA-256 helpers.
-- `backend/src/args.rs` — `--host`/`--port` CLI parsing.
-- `backend/tests/server.rs` — real HTTP integration tests + static WebUI guards.
+- `web/backend/src/hash.rs` — shared SHA-256 helpers.
+- `web/backend/src/args.rs` — `--host`/`--port` CLI parsing.
+- `web/backend/tests/server.rs` — real HTTP integration tests + static WebUI guards.
+- `ios/AIF/` — native SwiftUI app, local SwiftData models, services, and AI adapters.
+- `ios/AIFTests/`, `ios/AIFUITests/` — native unit and UI tests.
 
 ## Backend behavior
 
@@ -70,7 +73,7 @@ header-safe responses.
 
 Synchronous photo estimates are processed in memory. Background job request
 payloads temporarily live in SQLite until terminal state, when they are
-cleared. `deploy/backup.sh` expires queued work and clears every job payload
+cleared. `web/deploy/backup.sh` expires queued work and clears every job payload
 from the snapshot before encryption; do not describe all photo uploads as
 disk-free while background jobs are enabled.
 
@@ -87,6 +90,7 @@ or shared server state. Never log API keys or return them in errors/info.
 ## Commands
 
 ```bash
+cd web
 cargo build --release --manifest-path backend/Cargo.toml
 ./backend/target/release/aif-backend --host 127.0.0.1 --port 8080
 ```
@@ -97,11 +101,18 @@ cargo build --release --manifest-path backend/Cargo.toml
 Then visit `http://127.0.0.1:8080/`.
 
 ```bash
+cd web
 cargo test --manifest-path backend/Cargo.toml
 ```
 
 The integration tests spawn the binary on a free port and honor
 `AIF_BACKEND_BIN`.
+
+iOS builds require Xcode 15 or later on macOS. From the repository root, run
+`xcodebuild -project ios/AIF.xcodeproj -scheme AIF -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO test`.
+No cattle-weight model is bundled; do not describe local photo inference as
+available unless a compatible, independently validated Core ML model is
+installed.
 
 ## Testing/security expectations
 

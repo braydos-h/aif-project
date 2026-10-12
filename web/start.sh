@@ -2,12 +2,14 @@
 # Start the release backend and open the WebUI (Linux/macOS).
 # Mirrors start_gui.bat / start_gui.ps1.
 set -eu
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_DIR"
 
-BACKEND="backend/target/release/aif-backend"
+BACKEND="$SCRIPT_DIR/backend/target/release/aif-backend"
 if [ ! -x "$BACKEND" ]; then
     echo "Error: backend binary not found at \"$BACKEND\"" >&2
-    echo "Build it with: cargo build --release --manifest-path backend/Cargo.toml" >&2
+    echo "Build it with: (cd web && cargo build --release --manifest-path backend/Cargo.toml)" >&2
     exit 1
 fi
 

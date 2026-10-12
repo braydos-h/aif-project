@@ -1384,7 +1384,7 @@ fn cors_header_on_success() {
 // --- static WebUI guards (served-asset contract: ids, strings, headers) ---
 
 fn web_file(name: &str) -> String {
-    let path = format!("{}/../web/{}", env!("CARGO_MANIFEST_DIR"), name);
+    let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), name);
     std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("missing web/{}", name))
 }
 

@@ -25,29 +25,29 @@ jobs:
           components: rustfmt, clippy
 
       - name: Check Rust formatting
-        run: cargo fmt --manifest-path backend/Cargo.toml -- --check
+        run: cargo fmt --manifest-path web/backend/Cargo.toml -- --check
 
       - name: Rust clippy
-        run: cargo clippy --manifest-path backend/Cargo.toml --all-targets --all-features -- -D warnings
+        run: cargo clippy --manifest-path web/backend/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Guard against tracked secrets
-        run: test -z "$(git ls-files .env)"
+        run: test -z "$(git ls-files .env web/.env)"
         shell: bash
 
       - name: Run Rust tests
-        run: cargo test --manifest-path backend/Cargo.toml
+        run: cargo test --manifest-path web/backend/Cargo.toml
 
       - name: Build Rust backend (release)
-        run: cargo build --release --manifest-path backend/Cargo.toml
+        run: cargo build --release --manifest-path web/backend/Cargo.toml
 
       - name: Upload backend to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            backend/target/release/aif-backend.exe
+            web/backend/target/release/aif-backend.exe
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: CowWeightEstimator-backend-windows
-          path: backend/target/release/aif-backend.exe
+          path: web/backend/target/release/aif-backend.exe

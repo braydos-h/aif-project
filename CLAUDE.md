@@ -1,10 +1,9 @@
 # CLAUDE.md
 
-This repository is a Rust-served local WebUI/API for estimating cow weight.
-The browser assets live in `web/`; the threaded Rust server lives in
-`backend/`. There is no Python runtime: `start_gui.bat` / `start_gui.ps1`
-launch the release binary and open the WebUI, and the tests live in
-`backend/tests/`.
+This repository contains two independent products: a Rust-served web app in
+`web/` and a native SwiftUI iPhone app in `ios/`. The iOS app must not depend
+on the web server or wrap the browser UI. Web launchers and tests are in
+`web/` and `web/backend/tests/`.
 
 Follow [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md). In
 particular:
@@ -22,6 +21,15 @@ particular:
 Build and test with:
 
 ```bash
+cd web
 cargo build --release --manifest-path backend/Cargo.toml
 cargo test --manifest-path backend/Cargo.toml
+```
+
+On macOS with Xcode 15 or later, build and test the iOS project separately:
+
+```bash
+xcodebuild -project ios/AIF.xcodeproj -scheme AIF \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  CODE_SIGNING_ALLOWED=NO test
 ```

@@ -1,10 +1,10 @@
 $ErrorActionPreference = 'Stop'
-Set-Location -LiteralPath $PSScriptRoot
+Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 
 $backend = Join-Path $PSScriptRoot 'backend\target\release\aif-backend.exe'
 if (-not (Test-Path -LiteralPath $backend)) {
     Write-Host "Error: backend binary not found at `"$backend`""
-    Write-Host 'Build it with: cargo build --release --manifest-path backend\Cargo.toml'
+    Write-Host 'Build it with: Set-Location web; cargo build --release --manifest-path backend\Cargo.toml'
     Read-Host -Prompt 'Press Enter to exit'
     exit 1
 }

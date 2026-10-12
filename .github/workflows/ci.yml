@@ -4,9 +4,9 @@ name: CI
 # Covers the Rust backend (fmt/clippy/tests/build including real-HTTP
 # integration tests) + WebUI JS syntax check.  Mirrors the commands in
 # CONTRIBUTING.md / AGENTS.md:
-#   cargo fmt --check --manifest-path backend/Cargo.toml
-#   cargo test --manifest-path backend/Cargo.toml
-#   cargo build --release --manifest-path backend/Cargo.toml
+#   cargo fmt --check --manifest-path web/backend/Cargo.toml
+#   cargo test --manifest-path web/backend/Cargo.toml
+#   cargo build --release --manifest-path web/backend/Cargo.toml
 on:
   push:
   pull_request:
@@ -49,14 +49,14 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check Rust formatting
-        run: cargo fmt --manifest-path backend/Cargo.toml -- --check
+        run: cargo fmt --manifest-path web/backend/Cargo.toml -- --check
 
       - name: Rust clippy
-        run: cargo clippy --manifest-path backend/Cargo.toml --all-targets --all-features -- -D warnings
+        run: cargo clippy --manifest-path web/backend/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Guard against tracked secrets
         # .env is gitignored but was once tracked; fail loudly if it ever is again.
-        run: test -z "$(git ls-files .env)"
+        run: test -z "$(git ls-files .env web/.env)"
 
       - name: Guard against unsafe dynamic HTML
         # Dynamic browser values must use textContent/DOM APIs, never string-built HTML.
@@ -68,7 +68,7 @@ jobs:
         run: '! grep -rn --include=*.js -E "localStorage|sessionStorage" web/'
 
       - name: Check deploy scripts
-        run: sh -n deploy/install.sh && sh -n deploy/update.sh && sh -n deploy/rollback.sh && sh -n deploy/backup.sh && sh -n deploy/restore.sh
+        run: sh -n web/deploy/install.sh && sh -n web/deploy/update.sh && sh -n web/deploy/rollback.sh && sh -n web/deploy/backup.sh && sh -n web/deploy/restore.sh
 
       - name: Set up Node for WebUI syntax check
         uses: actions/setup-node@v4
@@ -76,20 +76,20 @@ jobs:
           node-version: "24"
 
       - name: Run Rust tests
-        # Includes the real-HTTP integration tests in backend/tests/server.rs
+        # Includes the real-HTTP integration tests in web/backend/tests/server.rs
         # (spawned binary + static WebUI guards).
-        run: cargo test --manifest-path backend/Cargo.toml
+        run: cargo test --manifest-path web/backend/Cargo.toml
 
       - name: Build Rust backend (release)
-        run: cargo build --release --manifest-path backend/Cargo.toml
+        run: cargo build --release --manifest-path web/backend/Cargo.toml
 
       - name: Validate WebUI syntax
         run: node --check web/router.js && node --check web/app.js && node --check web/account.js && node --check web/tests/journeys.test.mjs
 
       - name: Run reference evaluation (synthetic fixture)
-        # Real-data acceptance stays blocked (eval/README.md); this guards
+        # Real-data acceptance stays blocked (web/eval/README.md); this guards
         # the framework, schema, and gate plumbing on synthetic rows.
-        run: AIF_AI_BACKEND=none cargo run --manifest-path backend/Cargo.toml --bin aif-eval -- --dataset eval/fixtures/example.json --out /tmp/opencode/eval-report.json
+        run: AIF_AI_BACKEND=none cargo run --manifest-path web/backend/Cargo.toml --bin aif-eval -- --dataset web/eval/fixtures/example.json --out /tmp/opencode/eval-report.json
 
   browser:
     name: browser journeys
@@ -107,17 +107,20 @@ jobs:
         with:
           node-version: "24"
           cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install browser test dependency
         run: npm ci
+        working-directory: web
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
       - name: Build test server
-        run: cargo build --release --manifest-path backend/Cargo.toml --bin aif-backend
+        run: cargo build --release --manifest-path web/backend/Cargo.toml --bin aif-backend
 
       - name: Run invited-user browser journey
         env:
           AIF_BACKEND_BIN: backend/target/release/aif-backend
         run: npm run test:browser
+        working-directory: web

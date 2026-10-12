@@ -11,7 +11,7 @@ import test from "node:test";
 import { chromium } from "playwright";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = path.resolve(process.env.AIF_BACKEND_BIN || path.join(repo, "backend/target/release/aif-backend"));
+const binary = path.resolve(process.env.AIF_BACKEND_BIN || path.join(repo, "web/backend/target/release/aif-backend"));
 
 async function freePort() {
   const server = net.createServer();
@@ -121,8 +121,8 @@ test("invited user can navigate, submit a photo batch, review records, and log o
     await page.waitForFunction(() => document.body.dataset.route === "/estimate/batch");
     assert.equal(await page.locator("#image-input").evaluate((input) => input.multiple), true);
     await page.locator("#image-input").setInputFiles([
-      path.join(repo, "cows/cow 2.jpg"),
-      path.join(repo, "cows/cow 3.jpg"),
+      path.join(repo, "web/cows/cow 2.jpg"),
+      path.join(repo, "web/cows/cow 3.jpg"),
     ]);
     await page.waitForFunction(() => document.querySelectorAll("#file-list select").length === 2);
     for (const select of await page.locator("#file-list select").all()) await select.selectOption(animalId);

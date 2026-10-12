@@ -1,11 +1,11 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 set "BACKEND=%~dp0backend\target\release\aif-backend.exe"
 if not exist "%BACKEND%" (
     echo Error: backend binary not found at "%BACKEND%"
-    echo Build it with: cargo build --release --manifest-path backend\Cargo.toml
+    echo Build it with: cd web ^&^& cargo build --release --manifest-path backend\Cargo.toml
     pause
     exit /b 1
 )
